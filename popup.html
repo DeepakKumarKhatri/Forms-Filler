@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Form Filler</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Form Filler</h1>
+    <div id="password-screen" class="hidden">
+      <input type="password" id="password-input" placeholder="Enter password">
+      <button id="unlock-btn">Unlock</button>
+    </div>
+    <div id="main-content" class="hidden">
+      <select id="profile-select"></select>
+      <button id="add-profile">Add Profile</button>
+      <div id="fields-container"></div>
+      <button id="add-field">Add Field</button>
+      <div id="file-upload">
+        <h2>File Uploads</h2>
+        <div id="drop-zone">Drop files here or click to upload</div>
+        <input type="file" id="file-input" multiple hidden>
+        <div id="file-list"></div>
+      </div>
+      <button id="fill-forms">Fill Forms</button>
+      <button id="copy-data">Copy All Data</button>
+      <button id="export-data">Export Data</button>
+      <input type="file" id="import-input" accept=".json" hidden>
+      <button id="import-data">Import Data</button>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
+
