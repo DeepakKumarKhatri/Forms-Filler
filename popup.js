@@ -1,3 +1,288 @@
+const STORAGE_CONFIG = {
+  LOCAL: {
+    MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB per file
+    MAX_TOTAL_SIZE: 100 * 1024 * 1024, // 100MB total (adjustable)
+  },
+  SYNC: {
+    MAX_ITEM_SIZE: 8 * 1024, // 8KB per item
+  },
+  ALLOWED_FILE_TYPES: {
+    "image/jpeg": true,
+    "image/png": true,
+    "image/gif": true,
+    "application/pdf": true,
+    "application/msword": true,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+  },
+};
+
+class FileStorageManager {
+  constructor() {
+    this.currentProfile = "default";
+  }
+
+  async initialize() {
+    try {
+      const { fileRegistry } = (await this.getLocalStorage("fileRegistry")) || {
+        fileRegistry: {},
+      };
+      if (!fileRegistry) {
+        await this.setLocalStorage({ fileRegistry: {} });
+      }
+    } catch (error) {
+      console.error("Storage initialization error:", error);
+      throw error;
+    }
+  }
+
+  async storeFile(file, profile = this.currentProfile) {
+    try {
+      // Validate file
+      if (!this.validateFile(file)) {
+        throw new Error("Invalid file type or size");
+      }
+
+      // Read file
+      const fileData = await this.readFileAsDataUrl(file);
+      const fileId = this.generateFileId();
+      const fileInfo = {
+        id: fileId,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        profile: currentProfile,
+        timestamp: Date.now(),
+      };
+
+      // Update registry in sync storage (metadata only)
+      await this.updateFileRegistry(fileInfo);
+
+      // Store actual file data in local storage
+      await this.setLocalStorage({ [fileId]: fileData });
+
+      return fileInfo;
+    } catch (error) {
+      console.error("File storage error:", error);
+      throw error;
+    }
+  }
+
+  async getFile(fileId) {
+    try {
+      const { fileRegistry } = await this.getLocalStorage("fileRegistry");
+      const fileInfo = fileRegistry[fileId];
+
+      if (!fileInfo) {
+        throw new Error("File not found");
+      }
+
+      const fileData = await this.getLocalStorage(fileId);
+      return {
+        ...fileInfo,
+        data: fileData[fileId],
+      };
+    } catch (error) {
+      console.error("File retrieval error:", error);
+      throw error;
+    }
+  }
+
+  async deleteFile(fileId) {
+    try {
+      // Remove from registry
+      const { fileRegistry } = await this.getLocalStorage("fileRegistry");
+      delete fileRegistry[fileId];
+      await this.setLocalStorage({ fileRegistry });
+
+      // Remove file data
+      await this.removeLocalStorage(fileId);
+
+      return true;
+    } catch (error) {
+      console.error("File deletion error:", error);
+      throw error;
+    }
+  }
+
+  async listFiles(profile = this.currentProfile) {
+    try {
+      const { fileRegistry } = await this.getLocalStorage("fileRegistry");
+      return Object.values(fileRegistry).filter(
+        (file) => file.profile === profile
+      );
+    } catch (error) {
+      console.error("File listing error:", error);
+      throw error;
+    }
+  }
+
+  validateFile(file) {
+    return (
+      STORAGE_CONFIG.ALLOWED_FILE_TYPES[file.type] &&
+      file.size <= STORAGE_CONFIG.LOCAL.MAX_FILE_SIZE
+    );
+  }
+
+  async readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  generateFileId() {
+    return `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  async updateFileRegistry(fileInfo) {
+    const { fileRegistry } = (await this.getLocalStorage("fileRegistry")) || {
+      fileRegistry: {},
+    };
+    fileRegistry[fileInfo.id] = fileInfo;
+    await this.setLocalStorage({ fileRegistry });
+  }
+
+  getLocalStorage(key) {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(key, resolve);
+    });
+  }
+
+  setLocalStorage(data) {
+    return new Promise((resolve) => {
+      chrome.storage.local.set(data, resolve);
+    });
+  }
+
+  removeLocalStorage(key) {
+    return new Promise((resolve) => {
+      chrome.storage.local.remove(key, resolve);
+    });
+  }
+}
+
+class FileUploadUIHandler {
+  constructor(storageManager) {
+    this.storageManager = storageManager;
+    this.initializeUI();
+  }
+
+  initializeUI() {
+    const dropZone = document.getElementById("drop-zone");
+    const fileInput = document.getElementById("file-input");
+
+    dropZone.addEventListener("dragover", this.handleDragOver.bind(this));
+    dropZone.addEventListener("drop", this.handleDrop.bind(this));
+    fileInput.addEventListener("change", this.handleFileSelect.bind(this));
+  }
+
+  async handleFiles(files) {
+    try {
+      const uploadPromises = Array.from(files).map(async (file) => {
+        const fileInfo = await this.storageManager.storeFile(file);
+        this.addFileToUI(fileInfo);
+        return fileInfo;
+      });
+
+      await Promise.all(uploadPromises);
+      this.showNotification("Files uploaded successfully", "success");
+    } catch (error) {
+      this.showNotification(error.message, "error");
+    }
+  }
+
+  addFileToUI(fileInfo) {
+    const fileList = document.getElementById("file-list");
+    const fileItem = document.createElement("div");
+    fileItem.className = "file-item";
+
+    fileItem.innerHTML = `
+        <span class="file-icon">${this.getFileIcon(fileInfo.type)}</span>
+        <span class="file-name" title="${
+          fileInfo.name
+        }">${this.truncateFileName(fileInfo.name, 20)}</span>
+        <span class="file-size">${this.formatFileSize(fileInfo.size)}</span>
+        <button class="icon-button delete-file" data-file-id="${
+          fileInfo.id
+        }">X</button>
+      `;
+
+    fileItem.querySelector(".delete-file").addEventListener("click", () => {
+      this.handleDeleteFile(fileInfo.id);
+    });
+
+    fileList.appendChild(fileItem);
+  }
+
+  // UI Helper methods
+  handleDragOver(e) {
+    e.preventDefault();
+    e.currentTarget.classList.add("drag-over");
+  }
+
+  handleDrop(e) {
+    e.preventDefault();
+    e.currentTarget.classList.remove("drag-over");
+    this.handleFiles(e.dataTransfer.files);
+  }
+
+  handleFileSelect(e) {
+    this.handleFiles(e.target.files);
+  }
+
+  async handleDeleteFile(fileId) {
+    try {
+      await this.storageManager.deleteFile(fileId);
+      const fileItem = document.querySelector(
+        `[data-file-id="${fileId}"]`
+      ).parentElement;
+      fileItem.remove();
+      this.showNotification("File deleted successfully", "success");
+    } catch (error) {
+      this.showNotification("Error deleting file", "error");
+    }
+  }
+
+  getFileIcon(type) {
+    const icons = {
+      image: "🖼️",
+      "application/pdf": "📄",
+      "application/msword": "📝",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        "📝",
+    };
+    return icons[type] || "📎";
+  }
+
+  truncateFileName(name, maxLength) {
+    if (name.length <= maxLength) return name;
+    const ext = name.split(".").pop();
+    const nameWithoutExt = name.slice(0, -(ext.length + 1));
+    return `${nameWithoutExt.slice(0, maxLength - 3)}...${ext}`;
+  }
+
+  formatFileSize(bytes) {
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+  }
+
+  showNotification(message, type) {
+    const notification = document.createElement("div");
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 3000);
+  }
+}
+
 let currentProfile = "default";
 let isLocked = false;
 
@@ -6,6 +291,109 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const fieldsContainer = document.getElementById("fields-container");
   const fileList = document.getElementById("file-list");
+  const passwordScreen = document.getElementById("password-screen");
+  const mainContent = document.getElementById("main-content");
+  const unlockBtn = document.getElementById("unlock-btn");
+  const passwordInput = document.getElementById("password-input");
+  const profileSelect = document.getElementById("profile-select");
+  const addProfileBtn = document.getElementById("add-profile");
+  const addFieldButton = document.getElementById("add-field");
+  const fillFormsButton = document.getElementById("fill-forms");
+  const copyDataButton = document.getElementById("copy-data");
+  const exportDataButton = document.getElementById("export-data");
+  const importDataButton = document.getElementById("import-data");
+  const importInput = document.getElementById("import-input");
+  const dropZone = document.getElementById("drop-zone");
+  const fileInput = document.getElementById("file-input");
+  const storageManager = new FileStorageManager();
+  const uiHandler = new FileUploadUIHandler(storageManager);
+
+  async function initializeStorage() {
+    try {
+      await storageManager.initialize();
+      await loadProfilesWithFiles();
+    } catch (error) {
+      showNotification("Error initializing storage", "error");
+    }
+  }
+
+  initializeStorage();
+
+  async function loadProfilesWithFiles() {
+    chrome.storage.sync.get(["profiles"], async (result) => {
+      const profiles = result.profiles || {
+        default: { fields: [], files: [] },
+      };
+      profileSelect.innerHTML = "";
+
+      // Populate profile dropdown
+      Object.keys(profiles).forEach((profile) => {
+        const option = document.createElement("option");
+        option.value = profile;
+        option.textContent = profile;
+        profileSelect.appendChild(option);
+      });
+
+      // Set initial profile and load its data
+      currentProfile = profileSelect.value;
+      await loadCurrentProfileWithFiles();
+    });
+  }
+
+  async function loadCurrentProfileWithFiles() {
+    try {
+      // Load sync storage profile data
+      chrome.storage.sync.get(["profiles"], async (result) => {
+        const profiles = result.profiles || {};
+        const profile = profiles[currentProfile] || { fields: [], files: [] };
+
+        // Clear existing content
+        fieldsContainer.innerHTML = "";
+        fileList.innerHTML = "";
+
+        // Add fields
+        if (Array.isArray(profile.fields)) {
+          profile.fields.forEach((field) => {
+            if (
+              field &&
+              typeof field.label === "string" &&
+              typeof field.value === "string"
+            ) {
+              addFieldToUI(field.label, field.value);
+            }
+          });
+        }
+
+        // Fetch and display files from local storage
+        try {
+          const files = await storageManager.listFiles(currentProfile);
+          files.forEach((fileInfo) => {
+            uiHandler.addFileToUI(fileInfo);
+          });
+        } catch (error) {
+          showNotification("Error loading files", "error");
+        }
+      });
+    } catch (error) {
+      showNotification("Error loading profile", "error");
+      fieldsContainer.innerHTML = "";
+      fileList.innerHTML = "";
+    }
+  }
+
+  function handleFiles(files) {
+    try {
+      uiHandler.handleFiles(files);
+    } catch (error) {
+      showNotification(error.message, "error");
+    }
+  }
+
+  // Update existing event listeners
+  profileSelect.addEventListener("change", async (e) => {
+    currentProfile = e.target.value;
+    await loadCurrentProfileWithFiles();
+  });
 
   chrome.storage.sync.get(["profiles"], (result) => {
     if (!result.profiles) {
@@ -33,21 +421,6 @@ document.addEventListener("DOMContentLoaded", () => {
       loadProfiles();
     }
   });
-
-  const passwordScreen = document.getElementById("password-screen");
-  const mainContent = document.getElementById("main-content");
-  const unlockBtn = document.getElementById("unlock-btn");
-  const passwordInput = document.getElementById("password-input");
-  const profileSelect = document.getElementById("profile-select");
-  const addProfileBtn = document.getElementById("add-profile");
-  const addFieldButton = document.getElementById("add-field");
-  const fillFormsButton = document.getElementById("fill-forms");
-  const copyDataButton = document.getElementById("copy-data");
-  const exportDataButton = document.getElementById("export-data");
-  const importDataButton = document.getElementById("import-data");
-  const importInput = document.getElementById("import-input");
-  const dropZone = document.getElementById("drop-zone");
-  const fileInput = document.getElementById("file-input");
 
   // Check if the extension is locked
   chrome.storage.sync.get(["isLocked", "password"], (result) => {
@@ -86,6 +459,9 @@ document.addEventListener("DOMContentLoaded", () => {
         option.textContent = profile;
         profileSelect.appendChild(option);
       });
+
+      // Set initial profile value and load it
+      currentProfile = profileSelect.value;
       loadCurrentProfile();
     });
   }
@@ -133,11 +509,6 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-
-  profileSelect.addEventListener("change", (e) => {
-    currentProfile = e.target.value;
-    loadCurrentProfile();
-  });
 
   addProfileBtn.addEventListener("click", () => {
     const profileName = prompt("Enter new profile name:");
@@ -268,43 +639,15 @@ document.addEventListener("DOMContentLoaded", () => {
   dropZone.addEventListener("dragleave", () => {
     dropZone.classList.remove("drag-over");
   });
-  dropZone.addEventListener("drop", handleFileDrop);
-  fileInput.addEventListener("change", handleFileSelect);
-
-  function handleFileDrop(e) {
+  dropZone.addEventListener("drop", (e) => {
     e.preventDefault();
     dropZone.classList.remove("drag-over");
-    handleFiles(e.dataTransfer.files);
-  }
+    uiHandler.handleFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener("change", handleFileSelect);
 
   function handleFileSelect(e) {
     handleFiles(e.target.files);
-  }
-
-  function handleFiles(files) {
-    const MAX_FILE_SIZE = 100 * 1024; // 100KB limit for sync storage
-    const promises = Array.from(files).map((file) => {
-      return new Promise((resolve, reject) => {
-        if (file.size > MAX_FILE_SIZE) {
-          reject(`File ${file.name} is too large. Maximum size is 100KB`);
-          return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = (e) =>
-          resolve({ name: file.name, data: e.target.result });
-        reader.onerror = (e) => reject(`Error reading file ${file.name}`);
-        reader.readAsDataURL(file);
-      });
-    });
-
-    Promise.all(promises)
-      .then((fileData) => {
-        fileData.forEach(({ name, data }) => addFileToStorage(name, data));
-      })
-      .catch((error) => {
-        showNotification(error, "File handling error");
-      });
   }
 
   function addFileToStorage(name, data) {
@@ -314,35 +657,120 @@ document.addEventListener("DOMContentLoaded", () => {
         profiles[currentProfile] = { fields: [], files: [] };
       }
 
-      // Check storage quota
+      // Calculate size before adding new file
       const newFile = { name, data };
-      const newSize = new Blob([JSON.stringify(profiles)]).size;
+      const currentProfileSize = new Blob([
+        JSON.stringify(profiles[currentProfile]),
+      ]).size;
+      const newFileSize = new Blob([JSON.stringify(newFile)]).size;
 
-      if (newSize > chrome.storage.sync.QUOTA_BYTES_PER_ITEM) {
+      // Chrome sync storage has a limit of 8KB per item
+      const SYNC_STORAGE_LIMIT = 8192; // 8KB in bytes
+
+      if (currentProfileSize + newFileSize > SYNC_STORAGE_LIMIT) {
         showNotification(
-          "Storage quota exceeded. Try removing some files first.",
+          "File is too large. Maximum size when combined with existing data cannot exceed 8KB.",
           "error"
         );
         return;
       }
 
-      profiles[currentProfile].files.push(newFile);
+      // Check if file with same name exists
+      const existingFileIndex = profiles[currentProfile].files.findIndex(
+        (file) => file.name === name
+      );
 
+      if (existingFileIndex !== -1) {
+        // Update existing file
+        profiles[currentProfile].files[existingFileIndex] = newFile;
+      } else {
+        // Add new file
+        profiles[currentProfile].files.push(newFile);
+      }
+
+      // Save to storage with error handling
       chrome.storage.sync.set({ profiles }, () => {
         if (chrome.runtime.lastError) {
-          showNotification("Error saving file", "error");
+          console.error("Storage error:", chrome.runtime.lastError);
+          showNotification(
+            `Error saving file: ${chrome.runtime.lastError.message}`,
+            "error"
+          );
           return;
         }
+
         addFileToUI(name, data);
-        showNotification("File added successfully", "success");
+        showNotification("File saved successfully", "success");
       });
     });
   }
 
-  function addFileToUI(name, data) {
+  function handleFiles(files) {
+    const MAX_FILE_SIZE = 6 * 1024; // 6KB to leave room for other data
+
+    const promises = Array.from(files).map((file) => {
+      return new Promise((resolve, reject) => {
+        if (file.size > MAX_FILE_SIZE) {
+          reject(`File ${file.name} is too large. Maximum size is 6KB`);
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const fileType = file.type.split("/")[0];
+          const base64Data = e.target.result;
+
+          // Check encoded data size
+          const encodedSize = new Blob([base64Data]).size;
+          if (encodedSize > MAX_FILE_SIZE) {
+            reject(`Encoded file ${file.name} is too large after conversion`);
+            return;
+          }
+
+          resolve({
+            name: file.name,
+            data: base64Data,
+            type: fileType,
+          });
+        };
+        reader.onerror = (e) => reject(`Error reading file ${file.name}`);
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(promises)
+      .then((fileData) => {
+        fileData.forEach(({ name, data, type }) =>
+          addFileToStorage(name, data, type)
+        );
+      })
+      .catch((error) => {
+        showNotification(error, "error");
+      });
+  }
+
+  function addFileToUI(name, data, type = "") {
     const fileItem = document.createElement("div");
     fileItem.className = "file-item";
-    fileItem.textContent = name;
+
+    // Add icon based on file type
+    const icon = document.createElement("span");
+    icon.className = "file-icon";
+
+    if (type === "image") {
+      const img = document.createElement("img");
+      img.src = data;
+      img.className = "file-thumbnail";
+      icon.appendChild(img);
+    } else {
+      icon.textContent = getFileIcon(type);
+    }
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "file-name";
+    nameSpan.textContent = truncateFileName(name, 20);
+    nameSpan.title = name; // Show full name on hover
+
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "X";
     deleteBtn.className = "icon-button";
@@ -350,20 +778,42 @@ document.addEventListener("DOMContentLoaded", () => {
       removeFile(name);
       fileList.removeChild(fileItem);
     });
+
+    fileItem.appendChild(icon);
+    fileItem.appendChild(nameSpan);
     fileItem.appendChild(deleteBtn);
     fileList.appendChild(fileItem);
   }
 
-  function removeFile(name) {
-    chrome.storage.sync.get(["profiles"], (result) => {
-      const profiles = result.profiles || {};
-      profiles[currentProfile].files = profiles[currentProfile].files.filter(
-        (file) => file.name !== name
-      );
-      chrome.storage.sync.set({ profiles: profiles }, () => {
-        showNotification("File removed successfully", "success");
-      });
-    });
+  function getFileIcon(type) {
+    const icons = {
+      image: "🖼️",
+      text: "📄",
+      application: "📎",
+      audio: "🎵",
+      video: "🎥",
+    };
+    return icons[type] || "📄";
+  }
+
+  function truncateFileName(name, maxLength) {
+    if (name.length <= maxLength) return name;
+    const ext = name.split(".").pop();
+    const nameWithoutExt = name.slice(0, -(ext.length + 1));
+    return `${nameWithoutExt.slice(0, maxLength - 3)}...${ext}`;
+  }
+
+  function removeFile(fileId) {
+    try {
+      storageManager.deleteFile(fileId);
+      const fileItem = document.querySelector(
+        `[data-file-id="${fileId}"]`
+      ).parentElement;
+      fileItem.remove();
+      showNotification("File removed successfully", "success");
+    } catch (error) {
+      showNotification("Error removing file", "error");
+    }
   }
 
   function addFieldToUI(label = "", value = "") {

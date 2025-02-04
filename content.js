@@ -19,10 +19,15 @@ async function fillForms(profileName) {
     const profiles = result.profiles || {};
     const profile = profiles[profileName] || { fields: [] };
 
+    // Check if forms exist on the page
+    const inputs = document.querySelectorAll("input, textarea, select");
+    if (inputs.length === 0) {
+      throw new Error("There exists no forms on this site");
+    }
+
     const promises = profile.fields.map(async (field) => {
       const inputs = document.querySelectorAll("input, textarea, select");
       inputs.forEach((input) => {
-        // Add null check for placeholder
         if (
           (input.name &&
             input.name.toLowerCase().includes(field.label.toLowerCase())) ||
