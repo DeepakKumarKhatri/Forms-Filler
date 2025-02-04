@@ -8,30 +8,37 @@
 </head>
 <body>
   <div class="container">
-    <h1>Form Filler</h1>
+    <header>
+      <h1>Form Filler</h1>
+    </header>
     <div id="password-screen" class="hidden">
       <input type="password" id="password-input" placeholder="Enter password">
       <button id="unlock-btn">Unlock</button>
     </div>
     <div id="main-content" class="hidden">
-      <select id="profile-select"></select>
-      <button id="add-profile">Add Profile</button>
+      <div class="profile-section">
+        <select id="profile-select"></select>
+        <button id="add-profile" class="icon-button" title="Add Profile">+</button>
+      </div>
       <div id="fields-container"></div>
-      <button id="add-field">Add Field</button>
+      <button id="add-field" class="action-button">Add Field</button>
       <div id="file-upload">
         <h2>File Uploads</h2>
-        <div id="drop-zone">Drop files here or click to upload</div>
-        <input type="file" id="file-input" multiple hidden>
+        <div id="drop-zone">
+          <p>Drop files here or click to upload</p>
+          <input type="file" id="file-input" multiple hidden>
+        </div>
         <div id="file-list"></div>
       </div>
-      <button id="fill-forms">Fill Forms</button>
-      <button id="copy-data">Copy All Data</button>
-      <button id="export-data">Export Data</button>
-      <input type="file" id="import-input" accept=".json" hidden>
-      <button id="import-data">Import Data</button>
+      <div class="action-buttons">
+        <button id="fill-forms" class="action-button primary">Fill Forms</button>
+        <button id="copy-data" class="action-button">Copy Data</button>
+        <button id="export-data" class="action-button">Export</button>
+        <button id="import-data" class="action-button">Import</button>
+        <input type="file" id="import-input" accept=".json" hidden>
+      </div>
     </div>
   </div>
   <script src="popup.js"></script>
 </body>
 </html>
-

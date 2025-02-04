@@ -69,7 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
         mainContent.classList.remove("hidden");
         loadProfiles();
       } else {
-        alert("Incorrect password");
+        showNotification("Incorrect password", "error");
       }
     });
   });
@@ -126,7 +126,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         }
       } catch (error) {
-        console.error("Error loading profile:", error);
+        showNotification("Error loading profile", "error");
         // Initialize with empty profile
         fieldsContainer.innerHTML = "";
         fileList.innerHTML = "";
@@ -148,9 +148,10 @@ document.addEventListener("DOMContentLoaded", () => {
           profiles[profileName] = { fields: [], files: [] };
           chrome.storage.sync.set({ profiles: profiles }, () => {
             loadProfiles();
+            showNotification("Profile added successfully", "success");
           });
         } else {
-          alert("Profile already exists");
+          showNotification("Profile already exists", "error");
         }
       });
     }
@@ -161,11 +162,49 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   fillFormsButton.addEventListener("click", () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      chrome.tabs.sendMessage(tabs[0].id, {
-        action: "fillForms",
-        profile: currentProfile,
-      });
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]?.id) {
+        showNotification("No active tab found", "error");
+        return;
+      }
+
+      try {
+        // First, ensure the content script is injected
+        await chrome.scripting.executeScript({
+          target: { tabId: tabs[0].id },
+          files: ["content.js"],
+        });
+
+        // Then send the message
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          {
+            action: "fillForms",
+            profile: currentProfile,
+          },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.error(
+                "Message sending failed:",
+                chrome.runtime.lastError
+              );
+              showNotification("Error: Unable to fill forms", "error");
+              return;
+            }
+
+            if (response && response.success) {
+              showNotification("Forms filled successfully", "success");
+            } else {
+              showNotification(
+                response?.error || "Error filling forms",
+                "error"
+              );
+            }
+          }
+        );
+      } catch (error) {
+        showNotification("Error: Unable to access page", "error");
+      }
     });
   });
 
@@ -175,8 +214,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const currentProfileData = profiles[currentProfile];
       navigator.clipboard
         .writeText(JSON.stringify(currentProfileData, null, 2))
-        .then(() => alert("Data copied to clipboard"))
-        .catch((err) => console.error("Error copying data: ", err));
+        .then(() => showNotification("Data copied to clipboard", "success"))
+        .catch((err) => {
+          showNotification("Error copying data", "error");
+        });
     });
   });
 
@@ -188,13 +229,11 @@ document.addEventListener("DOMContentLoaded", () => {
         encodeURIComponent(JSON.stringify(profiles));
       const downloadAnchorNode = document.createElement("a");
       downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute(
-        "download",
-        "smart_form_filler_data.json"
-      );
+      downloadAnchorNode.setAttribute("download", "form_filler_data.json");
       document.body.appendChild(downloadAnchorNode);
       downloadAnchorNode.click();
       downloadAnchorNode.remove();
+      showNotification("Data exported successfully", "success");
     });
   });
 
@@ -210,11 +249,11 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
           const importedData = JSON.parse(e.target.result);
           chrome.storage.sync.set({ profiles: importedData }, () => {
-            alert("Data imported successfully");
+            showNotification("Data imported successfully", "success");
             loadProfiles();
           });
         } catch (error) {
-          alert("Error importing data: " + error);
+          showNotification("Error importing data: " + error, "error");
         }
       };
       reader.readAsText(file);
@@ -222,12 +261,19 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   dropZone.addEventListener("click", () => fileInput.click());
-  dropZone.addEventListener("dragover", (e) => e.preventDefault());
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drag-over");
+  });
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.classList.remove("drag-over");
+  });
   dropZone.addEventListener("drop", handleFileDrop);
   fileInput.addEventListener("change", handleFileSelect);
 
   function handleFileDrop(e) {
     e.preventDefault();
+    dropZone.classList.remove("drag-over");
     handleFiles(e.dataTransfer.files);
   }
 
@@ -257,8 +303,7 @@ document.addEventListener("DOMContentLoaded", () => {
         fileData.forEach(({ name, data }) => addFileToStorage(name, data));
       })
       .catch((error) => {
-        console.error("File handling error:", error);
-        alert(error);
+        showNotification(error, "File handling error");
       });
   }
 
@@ -274,7 +319,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const newSize = new Blob([JSON.stringify(profiles)]).size;
 
       if (newSize > chrome.storage.sync.QUOTA_BYTES_PER_ITEM) {
-        alert("Storage quota exceeded. Try removing some files first.");
+        showNotification(
+          "Storage quota exceeded. Try removing some files first.",
+          "error"
+        );
         return;
       }
 
@@ -282,9 +330,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       chrome.storage.sync.set({ profiles }, () => {
         if (chrome.runtime.lastError) {
+          showNotification("Error saving file", "error");
           return;
         }
         addFileToUI(name, data);
+        showNotification("File added successfully", "success");
       });
     });
   }
@@ -295,6 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fileItem.textContent = name;
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "X";
+    deleteBtn.className = "icon-button";
     deleteBtn.addEventListener("click", () => {
       removeFile(name);
       fileList.removeChild(fileItem);
@@ -309,7 +360,9 @@ document.addEventListener("DOMContentLoaded", () => {
       profiles[currentProfile].files = profiles[currentProfile].files.filter(
         (file) => file.name !== name
       );
-      chrome.storage.sync.set({ profiles: profiles });
+      chrome.storage.sync.set({ profiles: profiles }, () => {
+        showNotification("File removed successfully", "success");
+      });
     });
   }
 
@@ -329,6 +382,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const deleteButton = document.createElement("button");
     deleteButton.textContent = "X";
+    deleteButton.className = "icon-button";
     deleteButton.addEventListener("click", () => {
       fieldsContainer.removeChild(fieldDiv);
       saveFields();
@@ -367,18 +421,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
           chrome.storage.sync.set({ profiles }, () => {
             if (chrome.runtime.lastError) {
-              console.error("Storage error:", chrome.runtime.lastError);
-              alert("Error saving data: " + chrome.runtime.lastError.message);
+              showNotification(
+                "Error saving data: " + chrome.runtime.lastError.message,
+                "error"
+              );
             }
           });
         } catch (error) {
-          console.error("Error saving fields:", error);
-          alert("Error saving fields: " + error.message);
+          showNotification("Error saving fields: " + error.message, "error");
         }
       });
     } catch (error) {
-      console.error("Error processing fields:", error);
-      alert("Error processing fields: " + error.message);
+      showNotification("Error processing fields: " + error.message, "error");
     }
+  }
+
+  function showNotification(message, type) {
+    const notification = document.createElement("div");
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(() => {
+      notification.remove();
+    }, 3000);
   }
 });

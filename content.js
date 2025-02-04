@@ -1,10 +1,16 @@
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "fillForms") {
     fillForms(request.profile)
-      .then(() => sendResponse({ success: true }))
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+      .then(() => {
+        console.log("Forms filled successfully");
+        sendResponse({ success: true });
+      })
+      .catch((error) => {
+        console.error("Error filling forms:", error);
+        sendResponse({ success: false, error: error.toString() });
+      });
+    return true; // Keep the messaging channel open
   }
-  return true; // Keep message channel open for async response
 });
 
 async function fillForms(profileName) {
