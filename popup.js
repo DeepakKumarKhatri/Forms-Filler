@@ -451,35 +451,47 @@ document.addEventListener("DOMContentLoaded", () => {
     fieldDiv.className = "field";
     fieldDiv.dataset.fieldId = Date.now().toString();
 
+    const fieldContent = document.createElement("div");
+    fieldContent.className = "field-content";
+
     const labelInput = document.createElement("input");
     labelInput.type = "text";
     labelInput.placeholder = "Label";
     labelInput.value = label;
+    labelInput.className = "field-label";
 
     const valueInput = document.createElement("input");
     valueInput.type = "text";
     valueInput.placeholder = "Value";
     valueInput.value = value;
+    valueInput.className = "field-value";
 
     const deleteButton = document.createElement("button");
-    deleteButton.textContent = "X";
-    deleteButton.className = "icon-button delete-field";
-    deleteButton.addEventListener("click", () => {
-      if (confirm("Are you sure you want to delete this field?")) {
+    deleteButton.innerHTML = "X";
+    deleteButton.className = "delete-field";
+    deleteButton.title = "Delete field";
+    deleteButton.addEventListener("click", async () => {
+      try {
+        fieldDiv.style.animation = "fadeOut 0.3s ease";
+        await new Promise((resolve) => setTimeout(resolve, 300));
         fieldsContainer.removeChild(fieldDiv);
         saveFields();
         showNotification("Field deleted successfully", "success");
+      } catch (error) {
+        showNotification("Error deleting field", "error");
       }
     });
 
     fieldDiv.appendChild(labelInput);
     fieldDiv.appendChild(valueInput);
+    fieldDiv.appendChild(fieldContent);
     fieldDiv.appendChild(deleteButton);
 
     fieldsContainer.appendChild(fieldDiv);
 
     labelInput.addEventListener("input", saveFields);
     valueInput.addEventListener("input", saveFields);
+    fieldDiv.style.animation = "fadeIn 0.3s ease";
   }
 
   function saveFields() {
