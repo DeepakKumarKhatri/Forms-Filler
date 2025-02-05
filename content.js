@@ -19,32 +19,59 @@ async function fillForms(profileName) {
     const profiles = result.profiles || {};
     const profile = profiles[profileName] || { fields: [] };
 
-    // Check if forms exist on the page
-    const inputs = document.querySelectorAll("input, textarea, select");
-    if (inputs.length === 0) {
-      throw new Error("There exists no forms on this site");
+    const forms = document.querySelectorAll("form");
+    if (forms.length === 0) {
+      throw new Error("No forms found on this page");
     }
 
-    const promises = profile.fields.map(async (field) => {
-      const inputs = document.querySelectorAll("input, textarea, select");
-      inputs.forEach((input) => {
-        if (
-          (input.name &&
-            input.name.toLowerCase().includes(field.label.toLowerCase())) ||
-          (input.id &&
-            input.id.toLowerCase().includes(field.label.toLowerCase())) ||
-          (input.placeholder &&
-            input.placeholder.toLowerCase().includes(field.label.toLowerCase()))
-        ) {
-          // Trigger change event after setting value
-          input.value = field.value;
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          input.dispatchEvent(new Event("input", { bubbles: true }));
+    const fieldsNotFilled = [];
+
+    forms.forEach((form) => {
+      profile.fields.forEach((field) => {
+        const matchedInputs = Array.from(form.elements).filter((input) => {
+          const matchStrategies = [
+            input.name?.toLowerCase().includes(field.label.toLowerCase()),
+            input.id?.toLowerCase().includes(field.label.toLowerCase()),
+            input.placeholder
+              ?.toLowerCase()
+              .includes(field.label.toLowerCase()),
+            input
+              .getAttribute("aria-label")
+              ?.toLowerCase()
+              .includes(field.label.toLowerCase()),
+          ];
+
+          return matchStrategies.some((match) => match);
+        });
+
+        if (matchedInputs.length > 0) {
+          matchedInputs.forEach((input) => {
+            try {
+              if (input.type === "radio" || input.type === "checkbox") {
+                input.checked = field.value === "true";
+              } else {
+                input.value = field.value;
+              }
+
+              // Trigger events for frameworks like React
+              ["change", "input", "blur"].forEach((eventType) => {
+                input.dispatchEvent(new Event(eventType, { bubbles: true }));
+              });
+            } catch (err) {
+              console.warn(`Could not fill input:`, input, err);
+            }
+          });
+        } else {
+          fieldsNotFilled.push(field.label);
         }
       });
     });
 
-    await Promise.all(promises);
+    return {
+      success: true,
+      partiallyFilled: fieldsNotFilled.length > 0,
+      unfilledFields: fieldsNotFilled,
+    };
   } catch (error) {
     console.error("Error filling forms:", error);
     throw error;
