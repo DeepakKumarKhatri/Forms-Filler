@@ -133,6 +133,11 @@ button {
   border-radius: 4px;
   margin-top: 8px;
   overflow: hidden;
+  cursor: grab;
+}
+
+.file-item:active {
+  cursor: grabbing;
 }
 
 .file-icon {

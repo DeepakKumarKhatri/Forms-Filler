@@ -9,7 +9,7 @@ import {
 document.addEventListener("DOMContentLoaded", () => {
   let currentProfile = "default";
   let isLocked = false;
-  
+
   const fieldsContainer = document.getElementById("fields-container");
   const fileList = document.getElementById("file-list");
   const passwordScreen = document.getElementById("password-screen");
@@ -37,6 +37,32 @@ document.addEventListener("DOMContentLoaded", () => {
       showNotification("Error initializing storage", "error");
     }
   }
+
+  const deleteProfileBtn = document.createElement("button");
+  deleteProfileBtn.textContent = "🗑️";
+  deleteProfileBtn.className = "icon-button";
+  deleteProfileBtn.title = "Delete Profile";
+  deleteProfileBtn.addEventListener("click", () => {
+    if (currentProfile === "default") {
+      showNotification("Cannot delete default profile", "error");
+      return;
+    }
+
+    if (
+      confirm(`Are you sure you want to delete profile "${currentProfile}"?`)
+    ) {
+      chrome.storage.sync.get(["profiles"], (result) => {
+        const profiles = result.profiles || {};
+        delete profiles[currentProfile];
+        chrome.storage.sync.set({ profiles }, () => {
+          showNotification("Profile deleted successfully", "success");
+          currentProfile = "default";
+          loadProfiles();
+        });
+      });
+    }
+  });
+  document.querySelector(".profile-section").appendChild(deleteProfileBtn);
 
   initializeStorage();
 
@@ -423,6 +449,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function addFieldToUI(label = "", value = "") {
     const fieldDiv = document.createElement("div");
     fieldDiv.className = "field";
+    fieldDiv.dataset.fieldId = Date.now().toString();
 
     const labelInput = document.createElement("input");
     labelInput.type = "text";
@@ -436,10 +463,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const deleteButton = document.createElement("button");
     deleteButton.textContent = "X";
-    deleteButton.className = "icon-button";
+    deleteButton.className = "icon-button delete-field";
     deleteButton.addEventListener("click", () => {
-      fieldsContainer.removeChild(fieldDiv);
-      saveFields();
+      if (confirm("Are you sure you want to delete this field?")) {
+        fieldsContainer.removeChild(fieldDiv);
+        saveFields();
+        showNotification("Field deleted successfully", "success");
+      }
     });
 
     fieldDiv.appendChild(labelInput);
