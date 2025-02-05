@@ -21,12 +21,10 @@ export class FileStorageManager {
 
   async storeFile(file, currentProfile) {
     try {
-      // Validate file
       if (!this.validateFile(file)) {
         throw new Error("Invalid file type or size");
       }
 
-      // Read file
       const fileData = await this.readFileAsDataUrl(file);
       const fileId = this.generateFileId();
       const fileInfo = {

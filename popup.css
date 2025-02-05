@@ -139,10 +139,28 @@ button {
   margin-top: 8px;
   overflow: hidden;
   cursor: grab;
+  user-select: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
 .file-item:active {
   cursor: grabbing;
+}
+
+.file-item.dragging {
+  opacity: 0.6;
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.file-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.drag-over {
+  background-color: rgba(74, 144, 226, 0.1) !important;
+  border-color: var(--primary-color) !important;
 }
 
 .file-icon {
