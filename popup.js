@@ -67,7 +67,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeStorage();
 
   async function loadProfilesWithFiles() {
-    chrome.storage.sync.get(["profiles"], async (result) => {
+    chrome.storage.sync.get(["profiles", "lastUsedProfile"], async (result) => {
       const profiles = result.profiles || {
         default: { fields: [], files: [] },
       };
@@ -81,8 +81,14 @@ document.addEventListener("DOMContentLoaded", () => {
         profileSelect.appendChild(option);
       });
 
-      // Set initial profile and load its data
-      currentProfile = profileSelect.value;
+      // Set profile to last used if available, otherwise default
+      if (result.lastUsedProfile && profiles[result.lastUsedProfile]) {
+        currentProfile = result.lastUsedProfile;
+        profileSelect.value = currentProfile;
+      } else {
+        currentProfile = profileSelect.value;
+      }
+
       await loadCurrentProfileWithFiles();
     });
   }
@@ -139,6 +145,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // Update existing event listeners
   profileSelect.addEventListener("change", async (e) => {
     currentProfile = e.target.value;
+    // Save this as the last used profile
+    chrome.storage.sync.set({ lastUsedProfile: currentProfile });
     await loadCurrentProfileWithFiles();
   });
 
@@ -280,6 +288,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   fillFormsButton.addEventListener("click", () => {
+    chrome.storage.sync.set({ lastUsedProfile: currentProfile });
+
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (!tabs[0]?.id) {
         showNotification("No active tab found", "error");

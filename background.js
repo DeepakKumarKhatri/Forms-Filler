@@ -1,6 +1,10 @@
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Form Filler extension installed");
-  chrome.storage.sync.set({ isLocked: false, password: "" });
+  chrome.storage.sync.set({
+    isLocked: false,
+    password: "",
+    lastUsedProfile: "default",
+  });
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

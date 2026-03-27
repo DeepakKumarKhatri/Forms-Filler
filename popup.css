@@ -277,3 +277,14 @@ button {
     transform: translateY(-10px);
   }
 }
+
+.form-filler-file-label {
+  display: block;
+  margin-top: 5px;
+  padding: 8px;
+  background-color: #f0f8ff;
+  border: 1px solid #cce5ff;
+  border-radius: 4px;
+  color: #004085;
+  font-size: 0.9em;
+}

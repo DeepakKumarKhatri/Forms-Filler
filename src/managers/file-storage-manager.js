@@ -21,8 +21,12 @@ export class FileStorageManager {
 
   async storeFile(file, currentProfile) {
     try {
-      if (!this.validateFile(file)) {
-        throw new Error("Invalid file type or size");
+      if (file.size > STORAGE_CONFIG.LOCAL.MAX_FILE_SIZE) {
+        throw new Error(
+          `File size exceeds the maximum allowed (${
+            STORAGE_CONFIG.LOCAL.MAX_FILE_SIZE / (1024 * 1024)
+          }MB)`
+        );
       }
 
       const fileData = await this.readFileAsDataUrl(file);
@@ -30,13 +34,13 @@ export class FileStorageManager {
       const fileInfo = {
         id: fileId,
         name: file.name,
-        type: file.type,
+        type: file.type || this.guessFileType(file.name),
         size: file.size,
-        profile: currentProfile,
+        profile: currentProfile || "default",
         timestamp: Date.now(),
       };
 
-      // Update registry in sync storage (metadata only)
+      // Update registry in local storage (metadata only)
       await this.updateFileRegistry(fileInfo);
 
       // Store actual file data in local storage
@@ -47,6 +51,25 @@ export class FileStorageManager {
       console.error("File storage error:", error);
       throw error;
     }
+  }
+
+  guessFileType(filename) {
+    const ext = filename.split(".").pop().toLowerCase();
+    const mimeTypes = {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      gif: "image/gif",
+      pdf: "application/pdf",
+      doc: "application/msword",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      txt: "text/plain",
+      csv: "text/csv",
+      xls: "application/vnd.ms-excel",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+
+    return mimeTypes[ext] || "application/octet-stream";
   }
 
   async getFile(fileId) {
@@ -73,6 +96,11 @@ export class FileStorageManager {
     try {
       // Remove from registry
       const { fileRegistry } = await this.getLocalStorage("fileRegistry");
+
+      if (!fileRegistry || !fileRegistry[fileId]) {
+        throw new Error("File not found in registry");
+      }
+
       delete fileRegistry[fileId];
       await this.setLocalStorage({ fileRegistry });
 
@@ -88,9 +116,16 @@ export class FileStorageManager {
 
   async listFiles(profile = this.currentProfile) {
     try {
-      const { fileRegistry } = await this.getLocalStorage("fileRegistry");
+      const { fileRegistry } = (await this.getLocalStorage("fileRegistry")) || {
+        fileRegistry: {},
+      };
+
+      if (!fileRegistry) {
+        return [];
+      }
+
       return Object.values(fileRegistry).filter(
-        (file) => file.profile === profile
+        (file) => file && file.profile === profile
       );
     } catch (error) {
       console.error("File listing error:", error);
@@ -100,7 +135,7 @@ export class FileStorageManager {
 
   validateFile(file) {
     return (
-      STORAGE_CONFIG.ALLOWED_FILE_TYPES[file.type] &&
+      // For now, accept any file type to fix the upload issues
       file.size <= STORAGE_CONFIG.LOCAL.MAX_FILE_SIZE
     );
   }
@@ -133,14 +168,26 @@ export class FileStorageManager {
   }
 
   setLocalStorage(data) {
-    return new Promise((resolve) => {
-      chrome.storage.local.set(data, resolve);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set(data, () => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve();
+        }
+      });
     });
   }
 
   removeLocalStorage(key) {
-    return new Promise((resolve) => {
-      chrome.storage.local.remove(key, resolve);
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.remove(key, () => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve();
+        }
+      });
     });
   }
 }
