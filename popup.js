@@ -1,16 +1,173 @@
 document.addEventListener("DOMContentLoaded", () => {
-  // ── DOM refs: main screen ──
+
+  /* ━━━ Custom Dropdown ━━━ */
+  class Dropdown {
+    constructor(el) {
+      this.el = el;
+      this.triggerEl = el.querySelector(".dd-trigger");
+      this.textEl = el.querySelector(".dd-text");
+      this.menuEl = el.querySelector(".dd-menu");
+      this._value = "";
+      this._items = [];
+      this._handlers = [];
+
+      this.triggerEl.addEventListener("click", (e) => {
+        e.stopPropagation();
+        document.querySelectorAll(".dropdown.open").forEach((d) => {
+          if (d !== this.el) d.classList.remove("open");
+        });
+        this.el.classList.toggle("open");
+      });
+    }
+
+    get value() { return this._value; }
+    set value(v) {
+      this._value = v;
+      const item = this._items.find((i) => i.value === v);
+      if (item) this.textEl.textContent = item.text;
+      this._syncActive();
+    }
+
+    get items() { return this._items; }
+
+    onChange(fn) { this._handlers.push(fn); }
+
+    setItems(items) {
+      this._items = items;
+      this.menuEl.innerHTML = "";
+      items.forEach((item) => {
+        const btn = document.createElement("button");
+        btn.className = "dd-item";
+        btn.type = "button";
+        btn.dataset.value = item.value;
+        if (item.title) btn.title = item.title;
+
+        const span = document.createElement("span");
+        span.className = "dd-item-text";
+        span.textContent = item.text;
+        btn.appendChild(span);
+
+        const check = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        check.setAttribute("class", "dd-check");
+        check.setAttribute("width", "14");
+        check.setAttribute("height", "14");
+        check.setAttribute("viewBox", "0 0 24 24");
+        check.setAttribute("fill", "none");
+        check.setAttribute("stroke", "currentColor");
+        check.setAttribute("stroke-width", "2.5");
+        check.setAttribute("stroke-linecap", "round");
+        check.setAttribute("stroke-linejoin", "round");
+        const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        poly.setAttribute("points", "20 6 9 17 4 12");
+        check.appendChild(poly);
+        btn.appendChild(check);
+
+        btn.addEventListener("click", () => {
+          this._value = item.value;
+          this.textEl.textContent = item.text;
+          this.el.classList.remove("open");
+          this._syncActive();
+          this._handlers.forEach((fn) => fn());
+        });
+
+        this.menuEl.appendChild(btn);
+      });
+      this._syncActive();
+    }
+
+    clear() {
+      this._items = [];
+      this._value = "";
+      this.textEl.textContent = "";
+      this.menuEl.innerHTML = "";
+    }
+
+    _syncActive() {
+      this.menuEl.querySelectorAll(".dd-item").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.value === this._value);
+      });
+    }
+  }
+
+  // Close dropdowns on outside click
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".dropdown")) {
+      document.querySelectorAll(".dropdown.open").forEach((d) => d.classList.remove("open"));
+    }
+  });
+
+  /* ━━━ Modal System ━━━ */
+  const modalOverlay = document.getElementById("modal-overlay");
+  const modalTitle = document.getElementById("modal-title");
+  const modalMessage = document.getElementById("modal-message");
+  const modalInput = document.getElementById("modal-input");
+  const modalCancel = document.getElementById("modal-cancel");
+  const modalConfirm = document.getElementById("modal-confirm");
+
+  let modalResolve = null;
+
+  function showModal({ title, message = "", input = false, inputDefault = "", confirmText = "Confirm", dangerous = false }) {
+    return new Promise((resolve) => {
+      modalResolve = resolve;
+      modalTitle.textContent = title;
+      modalMessage.textContent = message;
+
+      if (input) {
+        modalInput.classList.remove("hide");
+        modalInput.value = inputDefault;
+        setTimeout(() => { modalInput.focus(); modalInput.select(); }, 60);
+      } else {
+        modalInput.classList.add("hide");
+      }
+
+      modalConfirm.textContent = confirmText;
+      modalConfirm.className = "btn " + (dangerous ? "danger-confirm" : "primary");
+
+      modalOverlay.classList.remove("hidden");
+    });
+  }
+
+  function closeModal(result) {
+    modalOverlay.classList.add("hidden");
+    if (modalResolve) {
+      modalResolve(result);
+      modalResolve = null;
+    }
+  }
+
+  modalCancel.addEventListener("click", () => closeModal(null));
+  modalConfirm.addEventListener("click", () => {
+    if (!modalInput.classList.contains("hide")) {
+      closeModal(modalInput.value);
+    } else {
+      closeModal(true);
+    }
+  });
+  modalOverlay.addEventListener("click", (e) => {
+    if (e.target === modalOverlay) closeModal(null);
+  });
+  modalInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") closeModal(modalInput.value);
+  });
+
+  async function showPrompt(title, defaultValue = "") {
+    return showModal({ title, input: true, inputDefault: defaultValue, confirmText: "Save" });
+  }
+
+  async function showDangerConfirm(title, message = "") {
+    return showModal({ title, message, confirmText: "Delete", dangerous: true });
+  }
+
+  /* ━━━ DOM Refs ━━━ */
   const screenMain = document.getElementById("screen-main");
   const screenSettings = document.getElementById("screen-settings");
   const settingsBtn = document.getElementById("settings-btn");
   const backBtn = document.getElementById("back-btn");
-  const projectSelect = document.getElementById("project-select");
-  const profileSelect = document.getElementById("profile-select");
-  const accountBadgesEl = document.getElementById("account-badges");
   const profileCountEl = document.getElementById("profile-count");
   const addProfileBtn = document.getElementById("add-profile-btn");
   const renameProfileBtn = document.getElementById("rename-profile-btn");
   const deleteProfileBtn = document.getElementById("delete-profile-btn");
+  const accountBadgesEl = document.getElementById("account-badges");
   const scanBtn = document.getElementById("scan-btn");
   const fieldsSection = document.getElementById("fields-section");
   const fieldCount = document.getElementById("field-count");
@@ -18,18 +175,19 @@ document.addEventListener("DOMContentLoaded", () => {
   const actionsSection = document.getElementById("actions-section");
   const fillBtn = document.getElementById("fill-btn");
   const saveBtn = document.getElementById("save-btn");
-
-  // ── DOM refs: settings screen ──
   const exportBtn = document.getElementById("export-btn");
   const importBtn = document.getElementById("import-btn");
   const importInput = document.getElementById("import-input");
   const clearProjectBtn = document.getElementById("clear-project-btn");
   const clearAllBtn = document.getElementById("clear-all-btn");
 
+  const projectDD = new Dropdown(document.getElementById("project-dropdown"));
+  const profileDD = new Dropdown(document.getElementById("profile-dropdown"));
+
   let projectKey = "";
   let scannedFields = [];
 
-  // ── Helpers ──
+  /* ━━━ Helpers ━━━ */
   function toast(msg, type = "info") {
     const el = document.createElement("div");
     el.className = "toast " + type;
@@ -52,7 +210,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return new Promise((resolve) => chrome.storage.local.set(data, resolve));
   }
 
-  // ── Screen navigation ──
+  /* ━━━ Screen Navigation ━━━ */
   settingsBtn.addEventListener("click", () => {
     screenMain.classList.add("hidden");
     screenSettings.classList.remove("hidden");
@@ -62,7 +220,7 @@ document.addEventListener("DOMContentLoaded", () => {
     screenMain.classList.remove("hidden");
   });
 
-  // ── Project key derivation ──
+  /* ━━━ Project Key ━━━ */
   function deriveProjectKey(url, title) {
     let origin;
     try { origin = new URL(url).origin; } catch { origin = url; }
@@ -79,8 +237,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return origin;
   }
 
-  // ── Storage ──
-  // Shape: { projects: { [projectKey]: { fields: [...], profiles: { [name]: { values: {} } } } } }
+  /* ━━━ Storage ━━━ */
   async function getProjectData() {
     const { projects } = await storageGet("projects");
     const all = projects || {};
@@ -92,37 +249,33 @@ document.addEventListener("DOMContentLoaded", () => {
     await storageSet({ projects: all });
   }
 
-  // ── Project list ──
+  /* ━━━ Project List ━━━ */
   async function loadProjectList() {
     const { projects } = await storageGet("projects");
     const all = projects || {};
     const keys = Object.keys(all);
-    projectSelect.innerHTML = "";
 
-    // Always ensure the current tab's project is in the list
     if (!keys.includes(projectKey) && projectKey && projectKey !== "unknown") {
       keys.unshift(projectKey);
     }
 
-    keys.forEach((key) => {
-      const opt = document.createElement("option");
-      opt.value = key;
-      // Show a friendlier label
+    const items = keys.map((key) => {
+      let text;
       try {
         const u = new URL(key);
-        opt.textContent = u.hostname + (u.pathname !== "/" ? u.pathname : "");
+        text = u.hostname + (u.pathname !== "/" ? u.pathname : "");
       } catch {
-        opt.textContent = key;
+        text = key;
       }
-      opt.title = key;
-      projectSelect.appendChild(opt);
+      return { value: key, text, title: key };
     });
 
-    projectSelect.value = projectKey;
+    projectDD.setItems(items);
+    projectDD.value = projectKey;
   }
 
-  projectSelect.addEventListener("change", async () => {
-    projectKey = projectSelect.value;
+  projectDD.onChange(async () => {
+    projectKey = projectDD.value;
     scannedFields = [];
     fieldsSection.classList.add("hidden");
     actionsSection.classList.add("hidden");
@@ -131,11 +284,10 @@ document.addEventListener("DOMContentLoaded", () => {
     await tryRestoreFields();
   });
 
-  // ── Profiles ──
+  /* ━━━ Profiles ━━━ */
   async function loadProfiles() {
     const { all, project } = await getProjectData();
     const names = Object.keys(project.profiles);
-    profileSelect.innerHTML = "";
 
     if (names.length === 0) {
       project.profiles["default"] = { values: {} };
@@ -143,37 +295,35 @@ document.addEventListener("DOMContentLoaded", () => {
       names.push("default");
     }
 
-    names.forEach((name) => {
-      const opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      profileSelect.appendChild(opt);
-    });
+    const items = names.map((name) => ({ value: name, text: name }));
+    profileDD.setItems(items);
 
     profileCountEl.textContent = names.length;
 
     const { lastProfile } = await storageGet("lastProfile");
     const last = lastProfile && lastProfile[projectKey];
     if (last && names.includes(last)) {
-      profileSelect.value = last;
+      profileDD.value = last;
+    } else {
+      profileDD.value = names[0];
     }
 
     renderAccountBadges();
   }
 
-  // ── Account badges ──
+  /* ━━━ Account Badges ━━━ */
   function renderAccountBadges() {
     accountBadgesEl.innerHTML = "";
-    const options = Array.from(profileSelect.options);
-    if (options.length <= 1) return; // no badges if only one account
+    const items = profileDD.items;
+    if (items.length <= 1) return;
 
-    options.forEach((opt) => {
+    items.forEach((item) => {
       const badge = document.createElement("button");
-      badge.className = "account-badge" + (opt.value === profileSelect.value ? " active" : "");
-      badge.textContent = opt.textContent;
-      badge.title = opt.value;
+      badge.className = "account-badge" + (item.value === profileDD.value ? " active" : "");
+      badge.textContent = item.text;
+      badge.title = item.value;
       badge.addEventListener("click", async () => {
-        profileSelect.value = opt.value;
+        profileDD.value = item.value;
         await saveLastProfile();
         renderAccountBadges();
         renderFieldValues();
@@ -185,17 +335,17 @@ document.addEventListener("DOMContentLoaded", () => {
   async function saveLastProfile() {
     const { lastProfile } = await storageGet("lastProfile");
     const map = lastProfile || {};
-    map[projectKey] = profileSelect.value;
+    map[projectKey] = profileDD.value;
     await storageSet({ lastProfile: map });
   }
 
   function currentProfileName() {
-    return profileSelect.value;
+    return profileDD.value;
   }
 
-  // ── Profile CRUD ──
+  /* ━━━ Profile CRUD ━━━ */
   addProfileBtn.addEventListener("click", async () => {
-    const name = prompt("New account name:");
+    const name = await showPrompt("New Account");
     if (!name || !name.trim()) return;
     const trimmed = name.trim();
     const { all, project } = await getProjectData();
@@ -206,7 +356,7 @@ document.addEventListener("DOMContentLoaded", () => {
     project.profiles[trimmed] = { values: {} };
     await saveProjectData(all);
     await loadProfiles();
-    profileSelect.value = trimmed;
+    profileDD.value = trimmed;
     await saveLastProfile();
     renderAccountBadges();
     toast("Account created", "success");
@@ -216,7 +366,7 @@ document.addEventListener("DOMContentLoaded", () => {
   renameProfileBtn.addEventListener("click", async () => {
     const oldName = currentProfileName();
     if (!oldName) return;
-    const newName = prompt("Rename account to:", oldName);
+    const newName = await showPrompt("Rename Account", oldName);
     if (!newName || !newName.trim() || newName.trim() === oldName) return;
     const trimmed = newName.trim();
     const { all, project } = await getProjectData();
@@ -228,7 +378,7 @@ document.addEventListener("DOMContentLoaded", () => {
     delete project.profiles[oldName];
     await saveProjectData(all);
     await loadProfiles();
-    profileSelect.value = trimmed;
+    profileDD.value = trimmed;
     await saveLastProfile();
     renderAccountBadges();
     toast("Account renamed", "success");
@@ -243,7 +393,8 @@ document.addEventListener("DOMContentLoaded", () => {
       toast("Can't delete the only account", "error");
       return;
     }
-    if (!confirm(`Delete account "${name}"?`)) return;
+    const confirmed = await showDangerConfirm("Delete Account", 'Are you sure you want to delete "' + name + '"?');
+    if (!confirmed) return;
     delete project.profiles[name];
     await saveProjectData(all);
     await loadProfiles();
@@ -253,18 +404,19 @@ document.addEventListener("DOMContentLoaded", () => {
     renderFieldValues();
   });
 
-  profileSelect.addEventListener("change", async () => {
+  profileDD.onChange(async () => {
     await saveLastProfile();
+    renderAccountBadges();
     renderFieldValues();
   });
 
-  // ── Field scanning ──
+  /* ━━━ Scanning ━━━ */
   scanBtn.addEventListener("click", async () => {
     const tab = await getActiveTab();
     if (!tab?.id) { toast("No active tab", "error"); return; }
 
     scanBtn.disabled = true;
-    scanBtn.textContent = "Scanning...";
+    scanBtn.textContent = "Scanning\u2026";
 
     try {
       await chrome.scripting.executeScript({
@@ -289,7 +441,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         scannedFields = fields;
 
-        // Persist scanned fields for this project so they auto-load next time
         const { all, project } = await getProjectData();
         project.fields = fields;
         await saveProjectData(all);
@@ -305,7 +456,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // ── Render fields ──
+  /* ━━━ Fields ━━━ */
   function showFields() {
     fieldsSection.classList.remove("hidden");
     actionsSection.classList.remove("hidden");
@@ -336,7 +487,7 @@ document.addEventListener("DOMContentLoaded", () => {
         input.className = "field-input";
         const emptyOpt = document.createElement("option");
         emptyOpt.value = "";
-        emptyOpt.textContent = "— select —";
+        emptyOpt.textContent = "\u2014 select \u2014";
         input.appendChild(emptyOpt);
         field.options.forEach((o) => {
           const opt = document.createElement("option");
@@ -352,7 +503,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } else {
         input = document.createElement("input");
         input.type = field.type === "password" ? "password" : "text";
-        input.placeholder = "Enter value...";
+        input.placeholder = "Enter value\u2026";
         input.value = saved[field.key] || "";
       }
       input.dataset.fieldKey = field.key;
@@ -363,7 +514,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // ── Collect values from UI ──
   function collectValues() {
     const values = {};
     fieldsContainer.querySelectorAll(".field-row").forEach((row) => {
@@ -379,7 +529,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return values;
   }
 
-  // ── Save ──
+  /* ━━━ Save ━━━ */
   saveBtn.addEventListener("click", async () => {
     const values = collectValues();
     const { all, project } = await getProjectData();
@@ -391,7 +541,7 @@ document.addEventListener("DOMContentLoaded", () => {
     toast("Saved", "success");
   });
 
-  // ── Fill ──
+  /* ━━━ Fill ━━━ */
   fillBtn.addEventListener("click", async () => {
     const tab = await getActiveTab();
     if (!tab?.id) { toast("No active tab", "error"); return; }
@@ -409,7 +559,6 @@ document.addEventListener("DOMContentLoaded", () => {
         target: { tabId: tab.id },
         files: ["content.js"],
       });
-
       chrome.tabs.sendMessage(tab.id, { action: "fillFields", values }, (response) => {
         if (chrome.runtime.lastError) {
           toast("Fill failed", "error");
@@ -422,7 +571,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // ── Settings: Export ──
+  /* ━━━ Settings ━━━ */
   exportBtn.addEventListener("click", async () => {
     const { projects } = await storageGet("projects");
     const blob = new Blob([JSON.stringify(projects || {}, null, 2)], { type: "application/json" });
@@ -435,7 +584,6 @@ document.addEventListener("DOMContentLoaded", () => {
     toast("Exported", "success");
   });
 
-  // ── Settings: Import ──
   importBtn.addEventListener("click", () => importInput.click());
   importInput.addEventListener("change", (e) => {
     const file = e.target.files[0];
@@ -449,6 +597,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const merged = Object.assign(projects || {}, data);
         await storageSet({ projects: merged });
         toast("Imported", "success");
+        await loadProjectList();
         await loadProfiles();
         await tryRestoreFields();
       } catch (err) {
@@ -459,9 +608,9 @@ document.addEventListener("DOMContentLoaded", () => {
     importInput.value = "";
   });
 
-  // ── Settings: Clear project data ──
   clearProjectBtn.addEventListener("click", async () => {
-    if (!confirm(`Clear all data for this project?`)) return;
+    const confirmed = await showDangerConfirm("Clear Project", "This will delete all accounts and fields for this project.");
+    if (!confirmed) return;
     const { all } = await getProjectData();
     delete all[projectKey];
     await saveProjectData(all);
@@ -474,9 +623,9 @@ document.addEventListener("DOMContentLoaded", () => {
     toast("Project data cleared", "success");
   });
 
-  // ── Settings: Clear all data ──
   clearAllBtn.addEventListener("click", async () => {
-    if (!confirm("Delete ALL saved data across every project?")) return;
+    const confirmed = await showDangerConfirm("Clear Everything", "This will permanently delete ALL saved data across every project.");
+    if (!confirmed) return;
     await storageSet({ projects: {} });
     scannedFields = [];
     fieldsSection.classList.add("hidden");
@@ -487,7 +636,7 @@ document.addEventListener("DOMContentLoaded", () => {
     toast("All data cleared", "success");
   });
 
-  // ── Auto-restore saved fields on popup open ──
+  /* ━━━ Auto-Restore ━━━ */
   async function tryRestoreFields() {
     const { project } = await getProjectData();
     if (project.fields && project.fields.length > 0) {
@@ -496,7 +645,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // ── Init ──
+  /* ━━━ Init ━━━ */
   async function init() {
     const tab = await getActiveTab();
     if (tab) {
