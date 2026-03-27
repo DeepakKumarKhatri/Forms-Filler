@@ -1,87 +1,141 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === "fillForms") {
-    fillForms(request.profile)
-      .then(() => {
-        console.log("Forms filled successfully");
-        sendResponse({ success: true });
-      })
-      .catch((error) => {
-        console.error("Error filling forms:", error);
-        sendResponse({ success: false, error: error.toString() });
-      });
-    return true;
-  }
-});
+(() => {
+  if (window.__formFillerLoaded) return;
+  window.__formFillerLoaded = true;
 
-async function fillForms(profileName) {
-  try {
-    const result = await chrome.storage.sync.get(["profiles"]);
-    const profiles = result.profiles || {};
-    const profile = profiles[profileName] || { fields: [] };
-
-    // Save this as the last used profile
-    await chrome.storage.sync.set({ lastUsedProfile: profileName });
-
-    const forms = document.querySelectorAll("form");
-    if (forms.length === 0) {
-      throw new Error("No forms found on this page");
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    if (request.action === "scanFields") {
+      sendResponse({ fields: scanFields() });
+    } else if (request.action === "fillFields") {
+      fillFields(request.values);
+      sendResponse({ success: true });
     }
+    return true;
+  });
 
-    const fieldsNotFilled = [];
+  function getFieldLabel(el) {
+    // 1. Explicit <label for="...">
+    if (el.id) {
+      const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (label) return label.textContent.trim();
+    }
+    // 2. Wrapping <label>
+    const parentLabel = el.closest("label");
+    if (parentLabel) {
+      const clone = parentLabel.cloneNode(true);
+      clone.querySelectorAll("input,select,textarea").forEach((c) => c.remove());
+      const text = clone.textContent.trim();
+      if (text) return text;
+    }
+    // 3. aria-label
+    if (el.getAttribute("aria-label")) return el.getAttribute("aria-label").trim();
+    // 4. aria-labelledby
+    const labelledBy = el.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      const ref = document.getElementById(labelledBy);
+      if (ref) return ref.textContent.trim();
+    }
+    // 5. placeholder
+    if (el.placeholder) return el.placeholder.trim();
+    // 6. preceding sibling text
+    const prev = el.previousElementSibling;
+    if (prev && (prev.tagName === "LABEL" || prev.tagName === "SPAN")) {
+      return prev.textContent.trim();
+    }
+    return "";
+  }
 
-    forms.forEach((form) => {
-      profile.fields.forEach((field) => {
-        const matchedInputs = Array.from(form.elements).filter((input) => {
-          const matchStrategies = [
-            input.name?.toLowerCase().includes(field.label.toLowerCase()),
-            input.id?.toLowerCase().includes(field.label.toLowerCase()),
-            input.placeholder
-              ?.toLowerCase()
-              .includes(field.label.toLowerCase()),
-            input
-              .getAttribute("aria-label")
-              ?.toLowerCase()
-              .includes(field.label.toLowerCase()),
-          ];
+  function buildFieldKey(el) {
+    // Build a stable key: prefer id > name > data-testid > fallback to type+index
+    if (el.id) return "id:" + el.id;
+    if (el.name) return "name:" + el.name;
+    if (el.dataset.testid) return "testid:" + el.dataset.testid;
+    // fallback: type + DOM position among same-type siblings
+    const selector = el.tagName.toLowerCase() + "[type='" + (el.type || "text") + "']";
+    const all = Array.from(document.querySelectorAll(selector));
+    return "idx:" + el.tagName.toLowerCase() + ":" + (el.type || "text") + ":" + all.indexOf(el);
+  }
 
-          return matchStrategies.some((match) => match);
-        });
+  function isVisible(el) {
+    if (el.type === "hidden") return false;
+    const style = getComputedStyle(el);
+    return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+  }
 
-        if (matchedInputs.length > 0) {
-          matchedInputs.forEach((input) => {
-            try {
-              if (input.type === "file" && field.fileInfo) {
-                // For file inputs, just show the filename that would be filled
-                const fileLabel = document.createElement("span");
-                fileLabel.className = "form-filler-file-label";
-                fileLabel.textContent = `File to be filled: ${field.fileInfo.name}`;
-                input.parentNode.insertBefore(fileLabel, input.nextSibling);
-              } else if (input.type === "radio" || input.type === "checkbox") {
-                input.checked = field.value === "true";
-              } else {
-                input.value = field.value;
-              }
+  function scanFields() {
+    const elements = document.querySelectorAll(
+      "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']):not([type='image']):not([type='file']), select, textarea"
+    );
+    const fields = [];
+    const seenKeys = new Set();
 
-              ["change", "input", "blur"].forEach((eventType) => {
-                input.dispatchEvent(new Event(eventType, { bubbles: true }));
-              });
-            } catch (err) {
-              console.warn(`Could not fill input:`, input, err);
-            }
-          });
-        } else {
-          fieldsNotFilled.push(field.label);
-        }
-      });
+    elements.forEach((el) => {
+      if (!isVisible(el)) return;
+      const key = buildFieldKey(el);
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+
+      const label = getFieldLabel(el);
+      const field = {
+        key,
+        tag: el.tagName.toLowerCase(),
+        type: el.type || (el.tagName === "SELECT" ? "select" : "textarea"),
+        id: el.id || "",
+        name: el.name || "",
+        placeholder: el.placeholder || "",
+        label,
+        displayName: label || el.name || el.id || el.placeholder || key,
+      };
+
+      // For select elements, include options
+      if (el.tagName === "SELECT") {
+        field.options = Array.from(el.options).map((o) => ({
+          value: o.value,
+          text: o.textContent.trim(),
+        }));
+      }
+      fields.push(field);
     });
 
-    return {
-      success: true,
-      partiallyFilled: fieldsNotFilled.length > 0,
-      unfilledFields: fieldsNotFilled,
-    };
-  } catch (error) {
-    console.error("Error filling forms:", error);
-    throw error;
+    return fields;
   }
-}
+
+  function fillFields(values) {
+    // values = { "id:email": "test@example.com", "name:password": "abc123", ... }
+    const elements = document.querySelectorAll("input, select, textarea");
+    const filled = [];
+
+    elements.forEach((el) => {
+      const key = buildFieldKey(el);
+      if (!(key in values) || values[key] === "") return;
+
+      const val = values[key];
+
+      if (el.tagName === "SELECT") {
+        el.value = val;
+      } else if (el.type === "checkbox" || el.type === "radio") {
+        el.checked = val === "true" || val === true;
+      } else {
+        // Use native setter to trigger React/Vue/Angular change detection
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, "value"
+        )?.set || Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype, "value"
+        )?.set;
+
+        if (nativeInputValueSetter) {
+          nativeInputValueSetter.call(el, val);
+        } else {
+          el.value = val;
+        }
+      }
+
+      // Dispatch events so frameworks pick up the change
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+      filled.push(key);
+    });
+
+    return filled;
+  }
+})();

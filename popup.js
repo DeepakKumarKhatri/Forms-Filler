@@ -1,544 +1,513 @@
-import { FileStorageManager } from "./src/managers/file-storage-manager.js";
-import { FileUploadUIHandler } from "./src/handlers/file-upload-handler.js";
-import {
-  showNotification,
-  truncateFileName,
-  getFileIcon,
-} from "./src/utils/helpers.js";
-
 document.addEventListener("DOMContentLoaded", () => {
-  let currentProfile = "default";
-  let isLocked = false;
-
-  const fieldsContainer = document.getElementById("fields-container");
-  const fileList = document.getElementById("file-list");
-  const passwordScreen = document.getElementById("password-screen");
-  const mainContent = document.getElementById("main-content");
-  const unlockBtn = document.getElementById("unlock-btn");
-  const passwordInput = document.getElementById("password-input");
+  // ── DOM refs: main screen ──
+  const screenMain = document.getElementById("screen-main");
+  const screenSettings = document.getElementById("screen-settings");
+  const settingsBtn = document.getElementById("settings-btn");
+  const backBtn = document.getElementById("back-btn");
+  const projectSelect = document.getElementById("project-select");
   const profileSelect = document.getElementById("profile-select");
-  const addProfileBtn = document.getElementById("add-profile");
-  const addFieldButton = document.getElementById("add-field");
-  const fillFormsButton = document.getElementById("fill-forms");
-  const copyDataButton = document.getElementById("copy-data");
-  const exportDataButton = document.getElementById("export-data");
-  const importDataButton = document.getElementById("import-data");
-  const importInput = document.getElementById("import-input");
-  const dropZone = document.getElementById("drop-zone");
-  const fileInput = document.getElementById("file-input");
-  const storageManager = new FileStorageManager();
-  const uiHandler = new FileUploadUIHandler(storageManager);
+  const accountBadgesEl = document.getElementById("account-badges");
+  const profileCountEl = document.getElementById("profile-count");
+  const addProfileBtn = document.getElementById("add-profile-btn");
+  const renameProfileBtn = document.getElementById("rename-profile-btn");
+  const deleteProfileBtn = document.getElementById("delete-profile-btn");
+  const scanBtn = document.getElementById("scan-btn");
+  const fieldsSection = document.getElementById("fields-section");
+  const fieldCount = document.getElementById("field-count");
+  const fieldsContainer = document.getElementById("fields-container");
+  const actionsSection = document.getElementById("actions-section");
+  const fillBtn = document.getElementById("fill-btn");
+  const saveBtn = document.getElementById("save-btn");
 
-  async function initializeStorage() {
-    try {
-      await storageManager.initialize();
-      await loadProfilesWithFiles();
-    } catch (error) {
-      showNotification("Error initializing storage", "error");
-    }
+  // ── DOM refs: settings screen ──
+  const exportBtn = document.getElementById("export-btn");
+  const importBtn = document.getElementById("import-btn");
+  const importInput = document.getElementById("import-input");
+  const clearProjectBtn = document.getElementById("clear-project-btn");
+  const clearAllBtn = document.getElementById("clear-all-btn");
+
+  let projectKey = "";
+  let scannedFields = [];
+
+  // ── Helpers ──
+  function toast(msg, type = "info") {
+    const el = document.createElement("div");
+    el.className = "toast " + type;
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
   }
 
-  const deleteProfileBtn = document.createElement("button");
-  deleteProfileBtn.textContent = "🗑️";
-  deleteProfileBtn.className = "icon-button";
-  deleteProfileBtn.title = "Delete Profile";
-  deleteProfileBtn.addEventListener("click", () => {
-    if (currentProfile === "default") {
-      showNotification("Cannot delete default profile", "error");
+  function getActiveTab() {
+    return new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs[0] || null));
+    });
+  }
+
+  function storageGet(keys) {
+    return new Promise((resolve) => chrome.storage.local.get(keys, resolve));
+  }
+
+  function storageSet(data) {
+    return new Promise((resolve) => chrome.storage.local.set(data, resolve));
+  }
+
+  // ── Screen navigation ──
+  settingsBtn.addEventListener("click", () => {
+    screenMain.classList.add("hidden");
+    screenSettings.classList.remove("hidden");
+  });
+  backBtn.addEventListener("click", () => {
+    screenSettings.classList.add("hidden");
+    screenMain.classList.remove("hidden");
+  });
+
+  // ── Project key derivation ──
+  function deriveProjectKey(url, title) {
+    let origin;
+    try { origin = new URL(url).origin; } catch { origin = url; }
+
+    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(origin);
+    if (isLocal) {
+      const cleanTitle = (title || "untitled")
+        .replace(/\s+/g, "-")
+        .replace(/[^a-zA-Z0-9_\-]/g, "")
+        .toLowerCase()
+        .slice(0, 40);
+      return origin + "/" + cleanTitle;
+    }
+    return origin;
+  }
+
+  // ── Storage ──
+  // Shape: { projects: { [projectKey]: { fields: [...], profiles: { [name]: { values: {} } } } } }
+  async function getProjectData() {
+    const { projects } = await storageGet("projects");
+    const all = projects || {};
+    if (!all[projectKey]) all[projectKey] = { fields: [], profiles: {} };
+    return { all, project: all[projectKey] };
+  }
+
+  async function saveProjectData(all) {
+    await storageSet({ projects: all });
+  }
+
+  // ── Project list ──
+  async function loadProjectList() {
+    const { projects } = await storageGet("projects");
+    const all = projects || {};
+    const keys = Object.keys(all);
+    projectSelect.innerHTML = "";
+
+    // Always ensure the current tab's project is in the list
+    if (!keys.includes(projectKey) && projectKey && projectKey !== "unknown") {
+      keys.unshift(projectKey);
+    }
+
+    keys.forEach((key) => {
+      const opt = document.createElement("option");
+      opt.value = key;
+      // Show a friendlier label
+      try {
+        const u = new URL(key);
+        opt.textContent = u.hostname + (u.pathname !== "/" ? u.pathname : "");
+      } catch {
+        opt.textContent = key;
+      }
+      opt.title = key;
+      projectSelect.appendChild(opt);
+    });
+
+    projectSelect.value = projectKey;
+  }
+
+  projectSelect.addEventListener("change", async () => {
+    projectKey = projectSelect.value;
+    scannedFields = [];
+    fieldsSection.classList.add("hidden");
+    actionsSection.classList.add("hidden");
+    fieldsContainer.innerHTML = "";
+    await loadProfiles();
+    await tryRestoreFields();
+  });
+
+  // ── Profiles ──
+  async function loadProfiles() {
+    const { all, project } = await getProjectData();
+    const names = Object.keys(project.profiles);
+    profileSelect.innerHTML = "";
+
+    if (names.length === 0) {
+      project.profiles["default"] = { values: {} };
+      await saveProjectData(all);
+      names.push("default");
+    }
+
+    names.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      profileSelect.appendChild(opt);
+    });
+
+    profileCountEl.textContent = names.length;
+
+    const { lastProfile } = await storageGet("lastProfile");
+    const last = lastProfile && lastProfile[projectKey];
+    if (last && names.includes(last)) {
+      profileSelect.value = last;
+    }
+
+    renderAccountBadges();
+  }
+
+  // ── Account badges ──
+  function renderAccountBadges() {
+    accountBadgesEl.innerHTML = "";
+    const options = Array.from(profileSelect.options);
+    if (options.length <= 1) return; // no badges if only one account
+
+    options.forEach((opt) => {
+      const badge = document.createElement("button");
+      badge.className = "account-badge" + (opt.value === profileSelect.value ? " active" : "");
+      badge.textContent = opt.textContent;
+      badge.title = opt.value;
+      badge.addEventListener("click", async () => {
+        profileSelect.value = opt.value;
+        await saveLastProfile();
+        renderAccountBadges();
+        renderFieldValues();
+      });
+      accountBadgesEl.appendChild(badge);
+    });
+  }
+
+  async function saveLastProfile() {
+    const { lastProfile } = await storageGet("lastProfile");
+    const map = lastProfile || {};
+    map[projectKey] = profileSelect.value;
+    await storageSet({ lastProfile: map });
+  }
+
+  function currentProfileName() {
+    return profileSelect.value;
+  }
+
+  // ── Profile CRUD ──
+  addProfileBtn.addEventListener("click", async () => {
+    const name = prompt("New account name:");
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    const { all, project } = await getProjectData();
+    if (project.profiles[trimmed]) {
+      toast("Account already exists", "error");
       return;
     }
+    project.profiles[trimmed] = { values: {} };
+    await saveProjectData(all);
+    await loadProfiles();
+    profileSelect.value = trimmed;
+    await saveLastProfile();
+    renderAccountBadges();
+    toast("Account created", "success");
+    renderFieldValues();
+  });
 
-    if (
-      confirm(`Are you sure you want to delete profile "${currentProfile}"?`)
-    ) {
-      chrome.storage.sync.get(["profiles"], (result) => {
-        const profiles = result.profiles || {};
-        delete profiles[currentProfile];
-        chrome.storage.sync.set({ profiles }, () => {
-          showNotification("Profile deleted successfully", "success");
-          currentProfile = "default";
-          loadProfiles();
-        });
+  renameProfileBtn.addEventListener("click", async () => {
+    const oldName = currentProfileName();
+    if (!oldName) return;
+    const newName = prompt("Rename account to:", oldName);
+    if (!newName || !newName.trim() || newName.trim() === oldName) return;
+    const trimmed = newName.trim();
+    const { all, project } = await getProjectData();
+    if (project.profiles[trimmed]) {
+      toast("Name already taken", "error");
+      return;
+    }
+    project.profiles[trimmed] = project.profiles[oldName];
+    delete project.profiles[oldName];
+    await saveProjectData(all);
+    await loadProfiles();
+    profileSelect.value = trimmed;
+    await saveLastProfile();
+    renderAccountBadges();
+    toast("Account renamed", "success");
+    renderFieldValues();
+  });
+
+  deleteProfileBtn.addEventListener("click", async () => {
+    const name = currentProfileName();
+    if (!name) return;
+    const { all, project } = await getProjectData();
+    if (Object.keys(project.profiles).length <= 1) {
+      toast("Can't delete the only account", "error");
+      return;
+    }
+    if (!confirm(`Delete account "${name}"?`)) return;
+    delete project.profiles[name];
+    await saveProjectData(all);
+    await loadProfiles();
+    await saveLastProfile();
+    renderAccountBadges();
+    toast("Account deleted", "success");
+    renderFieldValues();
+  });
+
+  profileSelect.addEventListener("change", async () => {
+    await saveLastProfile();
+    renderFieldValues();
+  });
+
+  // ── Field scanning ──
+  scanBtn.addEventListener("click", async () => {
+    const tab = await getActiveTab();
+    if (!tab?.id) { toast("No active tab", "error"); return; }
+
+    scanBtn.disabled = true;
+    scanBtn.textContent = "Scanning...";
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content.js"],
       });
+
+      chrome.tabs.sendMessage(tab.id, { action: "scanFields" }, async (response) => {
+        scanBtn.disabled = false;
+        scanBtn.textContent = "Find Fields";
+
+        if (chrome.runtime.lastError) {
+          toast("Could not scan page", "error");
+          return;
+        }
+
+        const fields = response?.fields || [];
+        if (fields.length === 0) {
+          toast("No input fields found", "error");
+          return;
+        }
+
+        scannedFields = fields;
+
+        // Persist scanned fields for this project so they auto-load next time
+        const { all, project } = await getProjectData();
+        project.fields = fields;
+        await saveProjectData(all);
+        await loadProjectList();
+
+        toast(fields.length + " field(s) found", "success");
+        showFields();
+      });
+    } catch (err) {
+      scanBtn.disabled = false;
+      scanBtn.textContent = "Find Fields";
+      toast("Error: " + err.message, "error");
     }
   });
-  document.querySelector(".profile-section").appendChild(deleteProfileBtn);
 
-  initializeStorage();
+  // ── Render fields ──
+  function showFields() {
+    fieldsSection.classList.remove("hidden");
+    actionsSection.classList.remove("hidden");
+    fieldCount.textContent = scannedFields.length;
+    renderFieldValues();
+  }
 
-  async function loadProfilesWithFiles() {
-    chrome.storage.sync.get(["profiles", "lastUsedProfile"], async (result) => {
-      const profiles = result.profiles || {
-        default: { fields: [], files: [] },
-      };
-      profileSelect.innerHTML = "";
+  async function renderFieldValues() {
+    fieldsContainer.innerHTML = "";
+    if (scannedFields.length === 0) return;
 
-      // Populate profile dropdown
-      Object.keys(profiles).forEach((profile) => {
-        const option = document.createElement("option");
-        option.value = profile;
-        option.textContent = profile;
-        profileSelect.appendChild(option);
-      });
+    const { project } = await getProjectData();
+    const profile = project.profiles[currentProfileName()] || { values: {} };
+    const saved = profile.values || {};
 
-      // Set profile to last used if available, otherwise default
-      if (result.lastUsedProfile && profiles[result.lastUsedProfile]) {
-        currentProfile = result.lastUsedProfile;
-        profileSelect.value = currentProfile;
+    scannedFields.forEach((field) => {
+      const row = document.createElement("div");
+      row.className = "field-row";
+
+      const label = document.createElement("span");
+      label.className = "field-label";
+      label.textContent = field.displayName;
+      label.title = field.key;
+
+      let input;
+      if (field.type === "select" && field.options) {
+        input = document.createElement("select");
+        input.className = "field-input";
+        const emptyOpt = document.createElement("option");
+        emptyOpt.value = "";
+        emptyOpt.textContent = "— select —";
+        input.appendChild(emptyOpt);
+        field.options.forEach((o) => {
+          const opt = document.createElement("option");
+          opt.value = o.value;
+          opt.textContent = o.text || o.value;
+          input.appendChild(opt);
+        });
+        input.value = saved[field.key] || "";
+      } else if (field.type === "checkbox" || field.type === "radio") {
+        input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = saved[field.key] === "true";
       } else {
-        currentProfile = profileSelect.value;
+        input = document.createElement("input");
+        input.type = field.type === "password" ? "password" : "text";
+        input.placeholder = "Enter value...";
+        input.value = saved[field.key] || "";
       }
+      input.dataset.fieldKey = field.key;
 
-      await loadCurrentProfileWithFiles();
+      row.appendChild(label);
+      row.appendChild(input);
+      fieldsContainer.appendChild(row);
     });
   }
 
-  async function loadCurrentProfileWithFiles() {
-    try {
-      // Load sync storage profile data
-      chrome.storage.sync.get(["profiles"], async (result) => {
-        const profiles = result.profiles || {};
-        const profile = profiles[currentProfile] || { fields: [], files: [] };
-
-        // Clear existing content
-        fieldsContainer.innerHTML = "";
-        fileList.innerHTML = "";
-
-        // Add fields
-        if (Array.isArray(profile.fields)) {
-          profile.fields.forEach((field) => {
-            if (
-              field &&
-              typeof field.label === "string" &&
-              typeof field.value === "string"
-            ) {
-              addFieldToUI(field.label, field.value);
-            }
-          });
-        }
-
-        // Fetch and display files from local storage
-        try {
-          const files = await storageManager.listFiles(currentProfile);
-          files.forEach((fileInfo) => {
-            uiHandler.addFileToUI(fileInfo);
-          });
-        } catch (error) {
-          showNotification("Error loading files", "error");
-        }
-      });
-    } catch (error) {
-      showNotification("Error loading profile", "error");
-      fieldsContainer.innerHTML = "";
-      fileList.innerHTML = "";
-    }
-  }
-
-  function handleFiles(files) {
-    try {
-      uiHandler.handleFiles(files, currentProfile);
-    } catch (error) {
-      showNotification(error.message, "error");
-    }
-  }
-
-  // Update existing event listeners
-  profileSelect.addEventListener("change", async (e) => {
-    currentProfile = e.target.value;
-    // Save this as the last used profile
-    chrome.storage.sync.set({ lastUsedProfile: currentProfile });
-    await loadCurrentProfileWithFiles();
-  });
-
-  chrome.storage.sync.get(["profiles"], (result) => {
-    if (!result.profiles) {
-      chrome.storage.sync.set(
-        {
-          profiles: {
-            default: {
-              fields: [],
-              files: [],
-            },
-          },
-        },
-        () => {
-          if (chrome.runtime.lastError) {
-            console.error(
-              "Error initializing storage:",
-              chrome.runtime.lastError
-            );
-          } else {
-            loadProfiles();
-          }
-        }
-      );
-    } else {
-      loadProfiles();
-    }
-  });
-
-  // Check if the extension is locked
-  chrome.storage.sync.get(["isLocked", "password"], (result) => {
-    isLocked = result.isLocked || false;
-    if (isLocked) {
-      passwordScreen.classList.remove("hidden");
-    } else {
-      mainContent.classList.remove("hidden");
-      loadProfiles();
-    }
-  });
-
-  unlockBtn.addEventListener("click", () => {
-    chrome.storage.sync.get(["password"], (result) => {
-      if (passwordInput.value === result.password) {
-        isLocked = false;
-        chrome.storage.sync.set({ isLocked: false });
-        passwordScreen.classList.add("hidden");
-        mainContent.classList.remove("hidden");
-        loadProfiles();
+  // ── Collect values from UI ──
+  function collectValues() {
+    const values = {};
+    fieldsContainer.querySelectorAll(".field-row").forEach((row) => {
+      const input = row.querySelector("input, select.field-input");
+      if (!input) return;
+      const key = input.dataset.fieldKey;
+      if (input.type === "checkbox") {
+        values[key] = input.checked ? "true" : "false";
       } else {
-        showNotification("Incorrect password", "error");
+        values[key] = input.value;
       }
     });
+    return values;
+  }
+
+  // ── Save ──
+  saveBtn.addEventListener("click", async () => {
+    const values = collectValues();
+    const { all, project } = await getProjectData();
+    if (!project.profiles[currentProfileName()]) {
+      project.profiles[currentProfileName()] = { values: {} };
+    }
+    project.profiles[currentProfileName()].values = values;
+    await saveProjectData(all);
+    toast("Saved", "success");
   });
 
-  function loadProfiles() {
-    chrome.storage.sync.get(["profiles"], (result) => {
-      const profiles = result.profiles || {
-        default: { fields: [], files: [] },
-      };
-      profileSelect.innerHTML = "";
-      Object.keys(profiles).forEach((profile) => {
-        const option = document.createElement("option");
-        option.value = profile;
-        option.textContent = profile;
-        profileSelect.appendChild(option);
+  // ── Fill ──
+  fillBtn.addEventListener("click", async () => {
+    const tab = await getActiveTab();
+    if (!tab?.id) { toast("No active tab", "error"); return; }
+
+    const values = collectValues();
+    const { all, project } = await getProjectData();
+    if (!project.profiles[currentProfileName()]) {
+      project.profiles[currentProfileName()] = { values: {} };
+    }
+    project.profiles[currentProfileName()].values = values;
+    await saveProjectData(all);
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content.js"],
       });
 
-      // Set initial profile value and load it
-      currentProfile = profileSelect.value;
-      loadCurrentProfile();
-    });
-  }
-
-  function loadCurrentProfile() {
-    chrome.storage.sync.get(["profiles"], (result) => {
-      try {
-        const profiles = result.profiles || {};
-        const profile = profiles[currentProfile] || { fields: [], files: [] };
-
-        // Clear existing content
-        fieldsContainer.innerHTML = "";
-        fileList.innerHTML = "";
-
-        // Add fields if they exist
-        if (Array.isArray(profile.fields)) {
-          profile.fields.forEach((field) => {
-            if (
-              field &&
-              typeof field.label === "string" &&
-              typeof field.value === "string"
-            ) {
-              addFieldToUI(field.label, field.value);
-            }
-          });
+      chrome.tabs.sendMessage(tab.id, { action: "fillFields", values }, (response) => {
+        if (chrome.runtime.lastError) {
+          toast("Fill failed", "error");
+          return;
         }
-
-        // Add files if they exist
-        if (Array.isArray(profile.files)) {
-          profile.files.forEach((file) => {
-            if (
-              file &&
-              typeof file.name === "string" &&
-              typeof file.data === "string"
-            ) {
-              addFileToUI(file.name, file.data);
-            }
-          });
-        }
-      } catch (error) {
-        showNotification("Error loading profile", "error");
-        // Initialize with empty profile
-        fieldsContainer.innerHTML = "";
-        fileList.innerHTML = "";
-      }
-    });
-  }
-
-  addProfileBtn.addEventListener("click", () => {
-    const profileName = prompt("Enter new profile name:");
-    if (profileName) {
-      chrome.storage.sync.get(["profiles"], (result) => {
-        const profiles = result.profiles || {};
-        if (!profiles[profileName]) {
-          profiles[profileName] = { fields: [], files: [] };
-          chrome.storage.sync.set({ profiles: profiles }, () => {
-            loadProfiles();
-            showNotification("Profile added successfully", "success");
-          });
-        } else {
-          showNotification("Profile already exists", "error");
-        }
+        toast("Form filled", "success");
       });
+    } catch (err) {
+      toast("Error: " + err.message, "error");
     }
   });
 
-  addFieldButton.addEventListener("click", () => {
-    addFieldToUI();
+  // ── Settings: Export ──
+  exportBtn.addEventListener("click", async () => {
+    const { projects } = await storageGet("projects");
+    const blob = new Blob([JSON.stringify(projects || {}, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "form-filler-data.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("Exported", "success");
   });
 
-  fillFormsButton.addEventListener("click", () => {
-    chrome.storage.sync.set({ lastUsedProfile: currentProfile });
-
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (!tabs[0]?.id) {
-        showNotification("No active tab found", "error");
-        return;
-      }
-
+  // ── Settings: Import ──
+  importBtn.addEventListener("click", () => importInput.click());
+  importInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
       try {
-        // First, ensure the content script is injected
-        await chrome.scripting.executeScript({
-          target: { tabId: tabs[0].id },
-          files: ["content.js"],
-        });
-
-        // Then send the message
-        chrome.tabs.sendMessage(
-          tabs[0].id,
-          {
-            action: "fillForms",
-            profile: currentProfile,
-          },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              console.error(
-                "Message sending failed:",
-                chrome.runtime.lastError
-              );
-              showNotification("Error: Unable to fill forms", "error");
-              return;
-            }
-
-            if (response && response.success) {
-              showNotification("Forms filled successfully", "success");
-            } else {
-              showNotification(
-                response?.error || "Error filling forms",
-                "error"
-              );
-            }
-          }
-        );
-      } catch (error) {
-        showNotification("Error: Unable to access page", "error");
+        const data = JSON.parse(ev.target.result);
+        if (typeof data !== "object" || data === null) throw new Error("Invalid format");
+        const { projects } = await storageGet("projects");
+        const merged = Object.assign(projects || {}, data);
+        await storageSet({ projects: merged });
+        toast("Imported", "success");
+        await loadProfiles();
+        await tryRestoreFields();
+      } catch (err) {
+        toast("Import failed: " + err.message, "error");
       }
-    });
+    };
+    reader.readAsText(file);
+    importInput.value = "";
   });
 
-  copyDataButton.addEventListener("click", () => {
-    chrome.storage.sync.get(["profiles"], (result) => {
-      const profiles = result.profiles || {};
-      const currentProfileData = profiles[currentProfile];
-      navigator.clipboard
-        .writeText(JSON.stringify(currentProfileData, null, 2))
-        .then(() => showNotification("Data copied to clipboard", "success"))
-        .catch((err) => {
-          showNotification("Error copying data", "error");
-        });
-    });
+  // ── Settings: Clear project data ──
+  clearProjectBtn.addEventListener("click", async () => {
+    if (!confirm(`Clear all data for this project?`)) return;
+    const { all } = await getProjectData();
+    delete all[projectKey];
+    await saveProjectData(all);
+    scannedFields = [];
+    fieldsSection.classList.add("hidden");
+    actionsSection.classList.add("hidden");
+    fieldsContainer.innerHTML = "";
+    await loadProjectList();
+    await loadProfiles();
+    toast("Project data cleared", "success");
   });
 
-  exportDataButton.addEventListener("click", () => {
-    chrome.storage.sync.get(["profiles"], (result) => {
-      const profiles = result.profiles || {};
-      const dataStr =
-        "data:text/json;charset=utf-8," +
-        encodeURIComponent(JSON.stringify(profiles));
-      const downloadAnchorNode = document.createElement("a");
-      downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", "form_filler_data.json");
-      document.body.appendChild(downloadAnchorNode);
-      downloadAnchorNode.click();
-      downloadAnchorNode.remove();
-      showNotification("Data exported successfully", "success");
-    });
+  // ── Settings: Clear all data ──
+  clearAllBtn.addEventListener("click", async () => {
+    if (!confirm("Delete ALL saved data across every project?")) return;
+    await storageSet({ projects: {} });
+    scannedFields = [];
+    fieldsSection.classList.add("hidden");
+    actionsSection.classList.add("hidden");
+    fieldsContainer.innerHTML = "";
+    await loadProjectList();
+    await loadProfiles();
+    toast("All data cleared", "success");
   });
 
-  importDataButton.addEventListener("click", () => {
-    importInput.click();
-  });
-
-  importInput.addEventListener("change", (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const importedData = JSON.parse(e.target.result);
-          chrome.storage.sync.set({ profiles: importedData }, () => {
-            showNotification("Data imported successfully", "success");
-            loadProfiles();
-          });
-        } catch (error) {
-          showNotification("Error importing data: " + error, "error");
-        }
-      };
-      reader.readAsText(file);
+  // ── Auto-restore saved fields on popup open ──
+  async function tryRestoreFields() {
+    const { project } = await getProjectData();
+    if (project.fields && project.fields.length > 0) {
+      scannedFields = project.fields;
+      showFields();
     }
-  });
-
-  dropZone.addEventListener("click", () => fileInput.click());
-  dropZone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    dropZone.classList.add("drag-over");
-  });
-  dropZone.addEventListener("dragleave", () => {
-    dropZone.classList.remove("drag-over");
-  });
-  dropZone.addEventListener("drop", (e) => {
-    e.preventDefault();
-    dropZone.classList.remove("drag-over");
-    uiHandler.handleFiles(e.dataTransfer.files);
-  });
-  fileInput.addEventListener("change", handleFileSelect);
-
-  function handleFileSelect(e) {
-    handleFiles(e.target.files);
   }
 
-  function addFileToUI(name, data, type = "") {
-    const fileItem = document.createElement("div");
-    fileItem.className = "file-item";
-
-    // Add icon based on file type
-    const icon = document.createElement("span");
-    icon.className = "file-icon";
-
-    if (type === "image") {
-      const img = document.createElement("img");
-      img.src = data;
-      img.className = "file-thumbnail";
-      icon.appendChild(img);
+  // ── Init ──
+  async function init() {
+    const tab = await getActiveTab();
+    if (tab) {
+      projectKey = deriveProjectKey(tab.url || "", tab.title || "");
     } else {
-      icon.textContent = getFileIcon(type);
+      projectKey = "unknown";
     }
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "file-name";
-    nameSpan.textContent = truncateFileName(name, 20);
-    nameSpan.title = name; // Show full name on hover
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "X";
-    deleteBtn.className = "icon-button";
-    deleteBtn.addEventListener("click", () => {
-      removeFile(name);
-      fileList.removeChild(fileItem);
-    });
-
-    fileItem.appendChild(icon);
-    fileItem.appendChild(nameSpan);
-    fileItem.appendChild(deleteBtn);
-    fileList.appendChild(fileItem);
+    await loadProjectList();
+    await loadProfiles();
+    await tryRestoreFields();
   }
 
-  function removeFile(fileId) {
-    try {
-      storageManager.deleteFile(fileId);
-      const fileItem = document.querySelector(
-        `[data-file-id="${fileId}"]`
-      ).parentElement;
-      fileItem.remove();
-      showNotification("File removed successfully", "success");
-    } catch (error) {
-      showNotification("Error removing file", "error");
-    }
-  }
-
-  function addFieldToUI(label = "", value = "") {
-    const fieldDiv = document.createElement("div");
-    fieldDiv.className = "field";
-    fieldDiv.dataset.fieldId = Date.now().toString();
-
-    const fieldContent = document.createElement("div");
-    fieldContent.className = "field-content";
-
-    const labelInput = document.createElement("input");
-    labelInput.type = "text";
-    labelInput.placeholder = "Label";
-    labelInput.value = label;
-    labelInput.className = "field-label";
-
-    const valueInput = document.createElement("input");
-    valueInput.type = "text";
-    valueInput.placeholder = "Value";
-    valueInput.value = value;
-    valueInput.className = "field-value";
-
-    const deleteButton = document.createElement("button");
-    deleteButton.innerHTML = "X";
-    deleteButton.className = "delete-field";
-    deleteButton.title = "Delete field";
-    deleteButton.addEventListener("click", async () => {
-      try {
-        fieldDiv.style.animation = "fadeOut 0.3s ease";
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        fieldsContainer.removeChild(fieldDiv);
-        saveFields();
-        showNotification("Field deleted successfully", "success");
-      } catch (error) {
-        showNotification("Error deleting field", "error");
-      }
-    });
-
-    fieldDiv.appendChild(labelInput);
-    fieldDiv.appendChild(valueInput);
-    fieldDiv.appendChild(fieldContent);
-    fieldDiv.appendChild(deleteButton);
-
-    fieldsContainer.appendChild(fieldDiv);
-
-    labelInput.addEventListener("input", saveFields);
-    valueInput.addEventListener("input", saveFields);
-    fieldDiv.style.animation = "fadeIn 0.3s ease";
-  }
-
-  function saveFields() {
-    try {
-      const fields = Array.from(fieldsContainer.children)
-        .map((field) => {
-          const labelInput = field.children[0];
-          const valueInput = field.children[1];
-          return {
-            label: labelInput ? labelInput.value.trim() : "",
-            value: valueInput ? valueInput.value : "",
-          };
-        })
-        .filter((field) => field.label); // Only save fields with labels
-
-      chrome.storage.sync.get(["profiles"], (result) => {
-        try {
-          const profiles = result.profiles || {};
-          if (!profiles[currentProfile]) {
-            profiles[currentProfile] = { fields: [], files: [] };
-          }
-          profiles[currentProfile].fields = fields;
-
-          chrome.storage.sync.set({ profiles }, () => {
-            if (chrome.runtime.lastError) {
-              showNotification(
-                "Error saving data: " + chrome.runtime.lastError.message,
-                "error"
-              );
-            }
-          });
-        } catch (error) {
-          showNotification("Error saving fields: " + error.message, "error");
-        }
-      });
-    } catch (error) {
-      showNotification("Error processing fields: " + error.message, "error");
-    }
-  }
+  init();
 });

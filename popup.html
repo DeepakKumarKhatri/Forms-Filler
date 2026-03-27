@@ -8,37 +8,85 @@
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>Form Filler</h1>
-    </header>
-    <div id="password-screen" class="hidden">
-      <input type="password" id="password-input" placeholder="Enter password">
-      <button id="unlock-btn">Unlock</button>
-    </div>
-    <div id="main-content" class="hidden">
-      <div class="profile-section">
-        <select id="profile-select"></select>
-        <button id="add-profile" class="icon-button" title="Add Profile">+</button>
-      </div>
-      <div id="fields-container"></div>
-      <button id="add-field" class="action-button">Add Field</button>
-      <div id="file-upload">
-        <h2>File Uploads</h2>
-        <div id="drop-zone">
-          <p>Drop files here or click to upload</p>
-          <input type="file" id="file-input" multiple hidden>
+
+    <!-- ═══ MAIN SCREEN ═══ -->
+    <div id="screen-main">
+      <header>
+        <div class="header-row">
+          <h1>Form Filler</h1>
+          <button id="settings-btn" class="icon-btn" title="Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
         </div>
-        <div id="file-list"></div>
-      </div>
-      <div class="action-buttons">
-        <button id="fill-forms" class="action-button primary">Fill Forms</button>
-        <button id="copy-data" class="action-button">Copy Data</button>
-        <button id="export-data" class="action-button">Export</button>
-        <button id="import-data" class="action-button">Import</button>
-        <input type="file" id="import-input" accept=".json" hidden>
-      </div>
+      </header>
+
+      <!-- Project Selector -->
+      <section class="section">
+        <h2>Project</h2>
+        <select id="project-select"></select>
+      </section>
+
+      <!-- Accounts (profiles) -->
+      <section class="section">
+        <h2>Accounts <span id="profile-count" class="badge">0</span></h2>
+        <div class="row">
+          <select id="profile-select"></select>
+          <button id="add-profile-btn" class="icon-btn" title="New Account">+</button>
+          <button id="rename-profile-btn" class="icon-btn" title="Rename Account">✎</button>
+          <button id="delete-profile-btn" class="icon-btn danger" title="Delete Account">🗑</button>
+        </div>
+        <div id="account-badges" class="account-badges"></div>
+      </section>
+
+      <!-- Scan -->
+      <section class="section">
+        <button id="scan-btn" class="btn primary full-width">Find Fields</button>
+      </section>
+
+      <!-- Fields -->
+      <section id="fields-section" class="section hidden">
+        <h2>Fields <span id="field-count" class="badge">0</span></h2>
+        <div id="fields-container"></div>
+      </section>
+
+      <!-- Actions -->
+      <section id="actions-section" class="section hidden">
+        <div class="row actions-row">
+          <button id="fill-btn" class="btn accent">Fill Form</button>
+          <button id="save-btn" class="btn primary">Save</button>
+        </div>
+      </section>
     </div>
+
+    <!-- ═══ SETTINGS SCREEN ═══ -->
+    <div id="screen-settings" class="hidden">
+      <header>
+        <div class="header-row">
+          <button id="back-btn" class="icon-btn" title="Back">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <h1>Settings</h1>
+          <span></span>
+        </div>
+      </header>
+
+      <section class="section">
+        <h2>Data</h2>
+        <div class="row actions-row">
+          <button id="export-btn" class="btn outline">Export All Data</button>
+          <button id="import-btn" class="btn outline">Import Data</button>
+          <input type="file" id="import-input" accept=".json" hidden>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Danger Zone</h2>
+        <button id="clear-project-btn" class="btn danger-btn full-width">Clear This Project's Data</button>
+        <button id="clear-all-btn" class="btn danger-btn full-width" style="margin-top:8px">Clear All Data</button>
+      </section>
+    </div>
+
   </div>
-  <script src="popup.js" type="module"></script>
+  <script src="popup.js"></script>
 </body>
 </html>
